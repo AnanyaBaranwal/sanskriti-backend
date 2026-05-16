@@ -1,0 +1,511 @@
+### ============================================================
+### SANSKRITI DASHBOARD — Day 1 API Tests
+### How to use:
+###   1. Install "REST Client" extension in VS Code (humao.rest-client)
+###   2. Open this file in VS Code
+###   3. Click "Send Request" above any request to run it
+###   4. Response appears in a split panel on the right
+### ============================================================
+
+@baseUrl = http://localhost:5000/api
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5ZjQ5ZTY4ZTFhNTJlZmQ5ODQ0MTljMSIsInJvbGUiOiJzZWxsZXIiLCJpYXQiOjE3Nzc3NDc3ODUsImV4cCI6MTc3Nzc0ODY4NX0.YBFav4HVSH8ZjEmONDXBuCtSSEoM2ZdO9hRprUZFrU4
+### ─── Test 1: Health Check ────────────────────────────────────
+# @name healthCheck
+GET {{baseUrl}}/health
+
+### ─── Test 2: Register Seller ────────────────────────
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Ananya Seller",
+  "email": "ananya@sanskriti.com",
+  "password": "password123",
+  "phone": "9876543210"
+}
+
+### ─── Test 3: Login ──────────────────────────────────────────
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "ananya@sanskriti.com",
+  "password": "newpassword456"
+}
+
+
+### ─── Test 4: Get My Profile (paste token from Test 3 above) ─
+# @name getMe
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{token}}
+
+
+### ─── Test 5: Logout ─────────────────────────────────────────
+# @name logout
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer {{token}}
+
+
+### ─── Test 6: Try wrong password (should return 401) ─────────
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@sanskriti.com",
+  "password": "wrongpassword"
+}
+
+
+### ─── Test 7: Register duplicate email (should return 409) ───
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "Test Seller",
+  "email": "test@sanskriti.com",
+  "phone": "9876543210",
+  "password": "mypassword123"
+}
+
+### ====================================================
+### DAY 2 TESTS — JWT Refresh Token System
+### ====================================================
+
+### ─── Test 6: Refresh Token (get new accessToken) ───
+# Run this AFTER login. Uses the refreshToken cookie automatically.
+# @name refreshToken
+POST {{baseUrl}}/auth/refresh-token
+Cookie: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5ZjM1OWJmNjNlMzE1NDIzOTI5Y2EyMyIsImlhdCI6MTc3NzYxMzQxOCwiZXhwIjoxNzc4MjE4MjE4fQ.o_OhOWdsrwKU9smtsFN-g3W07HmVejySKh517wM2yHE
+
+### ─── Test 7: Forgot Password ───────────────────────
+# @name forgotPassword
+POST {{baseUrl}}/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "test@sanskriti.com"
+}
+
+
+### ─── Test 8: Reset Password ────────────────────────
+# Paste the token from your email here in the URL
+# @name resetPassword
+POST {{baseUrl}}/auth/reset-password/1d474d800510f1758c12fc3e7df4d94e8206736ae6d7439752f85c8cbcdf2365
+Content-Type: application/json
+
+{
+  "password": "newpassword123"
+}
+
+
+### ─── Test 9: Verify token rotation ─────────────────
+# After running Test 6, try using the OLD refresh token again
+# Send this request — should return 401 TOKEN_REUSE_DETECTED
+# This proves each refresh token can only be used once
+POST {{baseUrl}}/auth/refresh-token
+Cookie: refreshToken=PASTE_OLD_REFRESH_TOKEN_HERE
+### ====================================================
+### DAY 3 TESTS — Seller Profile + KYC
+### ====================================================
+
+### ─── Test D3-1: Get Profile ─────────────────────────
+GET {{baseUrl}}/seller/profile
+Authorization: Bearer {{token}}
+
+
+### ─── Test D3-2: Update Profile ─────────────────────
+PATCH {{baseUrl}}/seller/profile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Ananya Seller",
+  "phone": "9876543210",
+  "address": {
+    "street": "123 MG Road",
+    "city": "Lucknow",
+    "state": "Uttar Pradesh",
+    "pincode": "226001"
+  }
+}
+
+
+### ─── Test D3-3: Update Business Details ─────────────
+PATCH {{baseUrl}}/seller/business
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "businessName": "Sanskriti Creations",
+  "gstNumber": "09ABCDE1234F1Z5",
+  "address": {
+    "street": "456 Hazratganj",
+    "city": "Lucknow",
+    "state": "Uttar Pradesh",
+    "pincode": "226001"
+  }
+}
+
+
+### ─── Test D3-4: Submit KYC Details ─────────────────
+POST {{baseUrl}}/seller/kyc/upload
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "panNumber": "ABCDE1234F",
+  "aadharNumber": "1234 5678 9012",
+  "bankAccountNumber": "1234567890",
+  "bankIFSC": "SBIN0001234",
+  "bankAccountName": "Ananya Baranwal"
+}
+
+
+### ─── Test D3-5: Get KYC Status ──────────────────────
+GET {{baseUrl}}/seller/kyc
+Authorization: Bearer {{token}}
+
+
+### ─── Test D3-6: Change Password ────────────────────
+PATCH {{baseUrl}}/seller/change-password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "currentPassword": "password123",
+  "newPassword": "newpassword456"
+}
+### ====================================================
+### DAY 6 TESTS — Wallet System
+### ====================================================
+
+### ─── Test W1: Get Wallet Balance ────────────────────
+GET {{baseUrl}}/wallet/balance
+Authorization: Bearer {{token}}
+
+
+### ─── Test W2: Credit Wallet ─────────────────────────
+POST {{baseUrl}}/wallet/credit
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 500,
+  "description": "Added money to wallet",
+  "category": "TOPUP"
+}
+
+
+### ─── Test W3: Credit Again ──────────────────────────
+POST {{baseUrl}}/wallet/credit
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 1000,
+  "description": "Top up for orders",
+  "category": "TOPUP"
+}
+
+
+### ─── Test W4: Debit Wallet ──────────────────────────
+POST {{baseUrl}}/wallet/debit
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 200,
+  "description": "Order payment #001",
+  "category": "ORDER_PAYMENT"
+}
+
+
+### ─── Test W5: Try Debit More Than Balance ───────────
+POST {{baseUrl}}/wallet/debit
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 99999,
+  "description": "This should fail",
+  "category": "OTHER"
+}
+
+
+### ─── Test W6: Get Transactions ──────────────────────
+GET {{baseUrl}}/wallet/transactions
+Authorization: Bearer {{token}}
+
+
+### ─── Test W7: Filter CREDIT only ───────────────────
+GET {{baseUrl}}/wallet/transactions?type=CREDIT
+Authorization: Bearer {{token}}
+
+
+### ─── Test W8: Get Wallet Summary ────────────────────
+GET {{baseUrl}}/wallet/summary
+Authorization: Bearer {{token}}
+
+### ====================================================
+### DAY 7 TESTS — Mock Payment Flow
+### ====================================================
+
+### ─── Test P1: Create Payment Order ─────────────────
+POST {{baseUrl}}/payments/create-order
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 500
+}
+
+
+### ─── Test P2: Verify + Credit Wallet ───────────────
+# Paste the order id from P1 response here
+POST {{baseUrl}}/payments/verify
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "razorpay_order_id": "order_mock_1777714735143_2f0xq66h5",
+  "amount": 50000
+}
+
+
+### ─── Test P3: Check Wallet Balance After Top-up ────
+GET {{baseUrl}}/wallet/balance
+Authorization: Bearer {{token}}
+
+
+### ─── Test P4: Get Payment History ──────────────────
+GET {{baseUrl}}/payments/history
+Authorization: Bearer {{token}}
+
+### ====================================================
+### DAY 8 TESTS — Payout Request Flow
+### ====================================================
+
+### ─── Test PO1: Request Payout ───────────────────────
+POST {{baseUrl}}/payouts/request
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 300,
+  "accountNumber": "1234567890",
+  "ifscCode": "SBIN0001234",
+  "accountName": "Ananya Baranwal",
+  "bankName": "State Bank of India",
+  "sellerNote": "Monthly payout request"
+}
+
+
+### ─── Test PO2: Get My Payouts ───────────────────────
+GET {{baseUrl}}/payouts/my
+Authorization: Bearer {{token}}
+
+
+### ─── Test PO3: Get Single Payout ───────────────────
+# Paste payout _id from PO1 response
+GET {{baseUrl}}/payouts/69f5ce0245c580403c0fce7a
+Authorization: Bearer {{token}}
+
+
+### ─── Test PO4: Try Duplicate Request (should fail) ─
+POST {{baseUrl}}/payouts/request
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 200,
+  "accountNumber": "1234567890",
+  "ifscCode": "SBIN0001234",
+  "accountName": "Ananya Baranwal"
+}
+
+
+### ─── Test PO5: Cancel Payout ────────────────────────
+# Paste payout _id from PO1 response
+DELETE {{baseUrl}}/payouts/69f5ce0245c580403c0fce7a/cancel
+Authorization: Bearer {{token}}
+
+
+### ─── Test PO6: Request Again After Cancel ──────────
+POST {{baseUrl}}/payouts/request
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "amount": 500,
+  "accountNumber": "1234567890",
+  "ifscCode": "SBIN0001234",
+  "accountName": "Ananya Baranwal",
+  "bankName": "State Bank of India"
+}
+### ====================================================
+### DAY 11 TESTS — Orders Backend
+### ====================================================
+
+### ─── Test O1: Create Order ──────────────────────────
+POST {{baseUrl}}/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "buyer": {
+    "name": "Rahul Sharma",
+    "phone": "9876543210",
+    "email": "rahul@example.com",
+    "address": {
+      "street": "12 Park Street",
+      "city": "Delhi",
+      "state": "Delhi",
+      "pincode": "110001"
+    }
+  },
+  "items": [
+    {
+      "name": "Brass Ganesh Idol",
+      "description": "Antique brass idol, 200 years old",
+      "quantity": 1,
+      "price": 5000
+    },
+    {
+      "name": "Wooden Carved Frame",
+      "description": "Teak wood, hand carved",
+      "quantity": 2,
+      "price": 1500
+    }
+  ],
+  "taxPercent": 18,
+  "paymentMethod": "ONLINE",
+  "notes": "Handle with care"
+}
+
+
+### ─── Test O2: Create Second Order ───────────────────
+POST {{baseUrl}}/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "buyer": {
+    "name": "Priya Mehta",
+    "phone": "8765432109",
+    "address": {
+      "city": "Mumbai",
+      "state": "Maharashtra"
+    }
+  },
+  "items": [
+    {
+      "name": "Silver Diya Set",
+      "quantity": 3,
+      "price": 800
+    }
+  ],
+  "paymentMethod": "CASH"
+}
+
+
+### ─── Test O3: Get All Orders ────────────────────────
+GET {{baseUrl}}/orders
+Authorization: Bearer {{token}}
+
+
+### ─── Test O4: Get Single Order ─────────────────────
+# Paste order _id from O1 response
+GET {{baseUrl}}/orders/69f601aa4b179c3209446e59
+Authorization: Bearer {{token}}
+
+
+### ─── Test O5: Update Status to CONFIRMED ───────────
+# Paste order _id from O1
+PATCH {{baseUrl}}/orders/69f601aa4b179c3209446e59/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "CONFIRMED",
+  "note": "Payment verified, order confirmed"
+}
+
+
+### ─── Test O6: Update Status to SHIPPED ─────────────
+PATCH {{baseUrl}}/orders/69f601aa4b179c3209446e59/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "SHIPPED",
+  "note": "Dispatched via BlueDart, tracking: BD123456"
+}
+
+
+### ─── Test O7: Search Orders ────────────────────────
+GET {{baseUrl}}/orders?search=Rahul
+Authorization: Bearer {{token}}
+
+
+### ─── Test O8: Filter by Status ─────────────────────
+GET {{baseUrl}}/orders?status=PENDING
+Authorization: Bearer {{token}}
+
+
+### ─── Test O9: Get Order Stats ──────────────────────
+GET {{baseUrl}}/orders/stats/summary
+Authorization: Bearer {{token}}
+
+
+### ─── Test O10: Try invalid status (should fail) ────
+PATCH {{baseUrl}}/orders/69f601aa4b179c3209446e59/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "PENDING",
+  "note": "Try going back to PENDING — should fail"
+}
+
+### ====================================================
+### DAY 12 TESTS — Bills / Vyapaar
+### ====================================================
+
+### ─── Test B1: Generate Bill for Order ───────────────
+# Paste your order ID from Day 11 (O1 test)
+POST {{baseUrl}}/bills/generate/69f601aa4b179c3209446e59
+Authorization: Bearer {{token}}
+
+
+### ─── Test B2: Get All Bills ─────────────────────────
+GET {{baseUrl}}/bills
+Authorization: Bearer {{token}}
+
+
+### ─── Test B3: Get Single Bill ───────────────────────
+# Paste bill _id from B1 response
+GET {{baseUrl}}/bills/69f6408f1f68213264c7abad
+Authorization: Bearer {{token}}
+
+
+### ─── Test B4: Download Bill PDF ────────────────────
+# Paste bill _id from B1 response
+GET {{baseUrl}}/bills/69f6408f1f68213264c7abad/download
+Authorization: Bearer {{token}}
+
+
+### ─── Test B5: Update Payment Status ────────────────
+# Paste bill _id from B1 response
+PATCH {{baseUrl}}/bills/69f6408f1f68213264c7abad/payment
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "paymentStatus": "PAID"
+}
+
+
+### ─── Test B6: Try duplicate bill (should fail) ──────
+POST {{baseUrl}}/bills/generate/69f601aa4b179c3209446e59
+Authorization: Bearer {{token}}
