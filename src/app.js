@@ -139,3 +139,15 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
+const adminDuplicateRoutes   = require("./routes/admin/duplicate.admin.routes");
+const adminRolesRoutes       = require("./routes/admin/roles.admin.routes");
+const adminBulkInvoiceRoutes = require("./routes/admin/bulkinvoice.admin.routes");
+const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
+
+// ── Add these 4 lines in the route mounts section ────────────
+app.use("/api/admin/duplicates",    adminDuplicateRoutes);
+app.use("/api/admin/roles",         adminRolesRoutes);
+app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);
+app.use("/api/admin/reorder",       adminReorderRoutes);
+
