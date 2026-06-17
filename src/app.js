@@ -37,6 +37,8 @@ connectDB().then(() => {
 // ── Allowed origins ───────────────────────────────────────────
 const ALLOWED_ORIGINS = [
   "http://localhost:3000",
+  "https://vyrelle.in",
+  "https://www.vyrelle.in",
   "https://sanskriti.vyrelle.in",
   "https://www.sanskriti.vyrelle.in",
   process.env.FRONTEND_URL,
