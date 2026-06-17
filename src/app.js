@@ -26,6 +26,10 @@ const adminSearchRoutes    = require("./routes/admin/search.admin.routes");
 const adminAuditRoutes     = require("./routes/admin/auditlog.admin.routes");
 const adminAIRoutes        = require("./routes/admin/ai.admin.routes");
 const adminNotifyRoutes    = require("./routes/admin/notify.admin.routes");
+const adminDuplicateRoutes   = require("./routes/admin/duplicate.admin.routes");
+const adminRolesRoutes       = require("./routes/admin/roles.admin.routes");
+const adminBulkInvoiceRoutes = require("./routes/admin/bulk_invoice.admin.routes");
+const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
 
 const app = express();
 
@@ -111,6 +115,10 @@ app.use("/api/admin/search",     adminSearchRoutes);
 app.use("/api/admin/audit-logs", adminAuditRoutes);
 app.use("/api/admin/ai",         adminAIRoutes);
 app.use("/api/admin/notify",     adminNotifyRoutes);
+app.use("/api/admin/duplicates",    adminDuplicateRoutes);
+app.use("/api/admin/roles",         adminRolesRoutes);
+app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);
+app.use("/api/admin/reorder",       adminReorderRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -142,14 +150,4 @@ app.listen(PORT, () => {
 
 module.exports = app;
 
-const adminDuplicateRoutes   = require("./routes/admin/duplicate.admin.routes");
-const adminRolesRoutes       = require("./routes/admin/roles.admin.routes");
-const adminBulkInvoiceRoutes = require("./routes/admin/bulkinvoice.admin.routes");
-const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
-
-// ── Add these 4 lines in the route mounts section ────────────
-app.use("/api/admin/duplicates",    adminDuplicateRoutes);
-app.use("/api/admin/roles",         adminRolesRoutes);
-app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);
-app.use("/api/admin/reorder",       adminReorderRoutes);
 
