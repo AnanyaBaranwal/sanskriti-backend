@@ -15,6 +15,9 @@ const paymentRoutes  = require("./routes/payment.routes");
 const payoutRoutes   = require("./routes/payout.routes");
 const orderRoutes    = require("./routes/order.routes");
 const billRoutes     = require("./routes/bill.routes");
+const customerRoutes     = require("./routes/customer.routes");
+const analyticsRoutes    = require("./routes/analytics.routes");
+const notificationRoutes = require("./routes/notification.routes");
 
 // ── Admin routes ──────────────────────────────────────────────
 const adminClientRoutes    = require("./routes/admin/clients.admin.routes");
@@ -104,6 +107,9 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/payouts",  payoutRoutes);
 app.use("/api/orders",   orderRoutes);
 app.use("/api/bills",    billRoutes);
+app.use("/api/customers",     customerRoutes);
+app.use("/api/analytics",     analyticsRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // ── Admin routes ──────────────────────────────────────────────
 app.use("/api/admin/clients",    adminClientRoutes);
