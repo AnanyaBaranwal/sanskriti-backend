@@ -18,6 +18,11 @@ if (!fs.existsSync(profileDir)) {
   fs.mkdirSync(profileDir, { recursive: true });
 }
 
+const categoryDir = "uploads/categories/";
+if (!fs.existsSync(categoryDir)) {
+  fs.mkdirSync(categoryDir, { recursive: true });
+}
+
 // Storage config for KYC documents
 const kycStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -39,6 +44,18 @@ const profileStorage = multer.diskStorage({
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     const filename = `${req.seller.id}_profile_${Date.now()}${ext}`;
+    cb(null, filename);
+  },
+});
+
+// Storage config for category images (grid thumbnail + optional hero banner)
+const categoryStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/categories/");
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const filename = `${file.fieldname}_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`;
     cb(null, filename);
   },
 });
@@ -75,3 +92,13 @@ exports.uploadProfile = multer({
   fileFilter,
   limits: { fileSize: 2 * 1024 * 1024 }, // 2MB max
 }).single("profilePhoto");
+
+// Category image upload — optional grid thumbnail + optional hero banner
+exports.uploadCategoryImages = multer({
+  storage: categoryStorage,
+  fileFilter,
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB max per file
+}).fields([
+  { name: "image", maxCount: 1 },
+  { name: "heroImage", maxCount: 1 },
+]);

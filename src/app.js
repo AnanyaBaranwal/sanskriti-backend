@@ -18,6 +18,7 @@ const billRoutes     = require("./routes/bill.routes");
 const customerRoutes     = require("./routes/customer.routes");
 const analyticsRoutes    = require("./routes/analytics.routes");
 const notificationRoutes = require("./routes/notification.routes");
+const categoriesRoutes   = require("./routes/categories.routes");
 
 // ── Admin routes ──────────────────────────────────────────────
 const adminClientRoutes    = require("./routes/admin/clients.admin.routes");
@@ -33,6 +34,7 @@ const adminDuplicateRoutes   = require("./routes/admin/duplicate.admin.routes");
 const adminRolesRoutes       = require("./routes/admin/roles.admin.routes");
 const adminBulkInvoiceRoutes = require("./routes/admin/bulk_invoice.admin.routes");
 const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
+const adminCategoriesRoutes  = require("./routes/admin/categories.admin.routes");
 
 const app = express();
 
@@ -110,6 +112,7 @@ app.use("/api/bills",    billRoutes);
 app.use("/api/customers",     customerRoutes);
 app.use("/api/analytics",     analyticsRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/categories",    categoriesRoutes);
 
 // ── Admin routes ──────────────────────────────────────────────
 app.use("/api/admin/clients",    adminClientRoutes);
@@ -125,6 +128,7 @@ app.use("/api/admin/duplicates",    adminDuplicateRoutes);
 app.use("/api/admin/roles",         adminRolesRoutes);
 app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);
 app.use("/api/admin/reorder",       adminReorderRoutes);
+app.use("/api/admin/categories",    adminCategoriesRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -155,5 +159,3 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
-
-
