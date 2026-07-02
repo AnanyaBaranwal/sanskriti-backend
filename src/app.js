@@ -124,6 +124,7 @@ app.use("/api/admin/search",     adminSearchRoutes);
 app.use("/api/admin/audit-logs", adminAuditRoutes);
 app.use("/api/admin/ai",         adminAIRoutes);
 app.use("/api/admin/notify",     adminNotifyRoutes);
+app.use("/api/admin/refunds",    require("./routes/admin/refunds.admin.routes"));
 app.use("/api/admin/duplicates",    adminDuplicateRoutes);
 app.use("/api/admin/roles",         adminRolesRoutes);
 app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);

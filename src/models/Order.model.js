@@ -42,14 +42,13 @@ const orderSchema = new mongoose.Schema(
 
     items: [orderItemSchema],
 
-    subtotal:        { type: Number, required: true },
+    subtotal:        { type: Number, required: true }, // pure product cost (sum of item totals)
     taxAmount:       { type: Number, default: 0 },
     discountAmount:  { type: Number, default: 0 },
-    total:           { type: Number, required: true },
+    total:           { type: Number, required: true }, // subtotal + tax - discount (+ packaging/shipping if included in items)
 
     status: {
       type: String,
-      // Added PACKED and RETURNED to the original enum
       enum: ["PENDING", "CONFIRMED", "PROCESSING", "PACKED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"],
       default: "PENDING",
     },
@@ -76,10 +75,27 @@ const orderSchema = new mongoose.Schema(
       },
     ],
 
-    // Return / refund fields
+    // Return / refund fields (buyer-facing)
     returnReason:  { type: String, default: null },
     returnedAt:    { type: Date,   default: null },
-    refundAmount:  { type: Number, default: 0 },
+    refundAmount:  { type: Number, default: 0 }, // amount refunded to the BUYER (unrelated to seller wallet)
+
+    // ── Seller wallet debit — happens immediately when admin CONFIRMS the order ──
+    walletDeducted:       { type: Boolean, default: false },
+    walletDeductedAmount: { type: Number,  default: 0 }, // = order.total at time of confirmation
+
+    // ── Seller wallet refund — only the product cost (subtotal), requires admin approval ──
+    refundStatus: {
+      type: String,
+      enum: ["NONE", "PENDING", "APPROVED", "REJECTED"],
+      default: "NONE",
+    },
+    refundEligibleAmount: { type: Number, default: 0 }, // = order.subtotal, set when flagged
+    refundApprovedAt:     { type: Date,   default: null },
+    refundApprovedBy:     { type: String, default: null },
+    refundRejectedReason: { type: String, default: null },
+    walletRefunded:       { type: Boolean, default: false }, // true once actually credited
+    walletRefundedAmount: { type: Number,  default: 0 },
   },
   { timestamps: true }
 );
@@ -103,5 +119,6 @@ orderSchema.index({ "buyer.name": "text", "buyer.phone": "text", orderNumber: "t
 orderSchema.index({ sellerId: 1, createdAt: -1 });
 orderSchema.index({ clientId: 1 });
 orderSchema.index({ status: 1 });
+orderSchema.index({ refundStatus: 1 });
 
 module.exports = mongoose.model("Order", orderSchema);

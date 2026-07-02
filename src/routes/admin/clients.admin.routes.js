@@ -11,11 +11,12 @@ const { logAction } = require("../../utils/audit");
 router.use(protect, restrictTo("admin"));
 
 // ── GET /api/admin/clients ────────────────────────────────────
-// List all clients with search + filter
+// List all clients with search + filter, plus summary stats for
+// the header cards (Total / Active / With GST).
 router.get("/", async (req, res) => {
   try {
     const {
-      search, state, city,
+      search, state, city, status,
       page = 1, limit = 20,
       sortBy = "lastOrderAt", sortDir = "desc",
     } = req.query;
@@ -24,15 +25,21 @@ router.get("/", async (req, res) => {
 
     if (search) {
       query.$or = [
-        { name:  { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name:      { $regex: search, $options: "i" } },
+        { phone:     { $regex: search, $options: "i" } },
+        { email:     { $regex: search, $options: "i" } },
+        { company:   { $regex: search, $options: "i" } },
+        { gstNumber: { $regex: search, $options: "i" } },
       ];
     }
-    if (state) query["address.state"] = { $regex: state, $options: "i" };
-    if (city)  query["address.city"]  = { $regex: city,  $options: "i" };
+    if (state)  query["address.state"] = { $regex: state, $options: "i" };
+    if (city)   query["address.city"]  = { $regex: city,  $options: "i" };
+    if (status) query.status = status;
 
-    const total   = await Client.countDocuments(query);
+    const total    = await Client.countDocuments(query);
+    const active   = await Client.countDocuments({ ...query, status: "active" });
+    const withGST  = await Client.countDocuments({ ...query, gstNumber: { $exists: true, $nin: [null, ""] } });
+
     const clients = await Client.find(query)
       .sort({ [sortBy]: sortDir === "asc" ? 1 : -1 })
       .skip((page - 1) * limit)
@@ -44,8 +51,52 @@ router.get("/", async (req, res) => {
       total,
       page: Number(page),
       pages: Math.ceil(total / limit),
+      stats: { total, active, withGST },
       clients,
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ── POST /api/admin/clients ───────────────────────────────────
+// Manually add a new client (User Management "+ Add Client" button)
+router.post("/", async (req, res) => {
+  try {
+    const { name, phone, email, company, gstNumber, address, walletBalance, status, role } = req.body;
+
+    if (!name?.trim() || !phone?.trim()) {
+      return res.status(400).json({ success: false, message: "Name and phone are required" });
+    }
+
+    const exists = await Client.findOne({ sellerId: req.seller.id, phone: phone.trim() });
+    if (exists) {
+      return res.status(409).json({ success: false, message: "A client with this phone number already exists" });
+    }
+
+    const client = await Client.create({
+      sellerId: req.seller.id,
+      name:  name.trim(),
+      phone: phone.trim(),
+      email: email?.trim() || null,
+      company:   company?.trim()   || "",
+      gstNumber: gstNumber?.trim() || "",
+      address: address || {},
+      walletBalance: Number(walletBalance) || 0,
+      status: ["active", "inactive"].includes(status) ? status : "active",
+      role:   ["customer", "wholesale", "vip"].includes(role) ? role : "customer",
+    });
+
+    await logAction(req, {
+      action:      "CREATE",
+      entity:      "Client",
+      entityId:    client._id,
+      entityRef:   client.name,
+      description: `Manually added client ${client.name}`,
+    });
+
+    res.status(201).json({ success: true, client });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
@@ -155,10 +206,11 @@ router.get("/:id/activity", async (req, res) => {
 });
 
 // ── PATCH /api/admin/clients/:id ──────────────────────────────
-// Update client info
+// Update client info — now includes company, GST, wallet balance,
+// status, and role so the drawer can fully edit a client record.
 router.patch("/:id", async (req, res) => {
   try {
-    const allowed = ["name", "email", "address"];
+    const allowed = ["name", "email", "address", "company", "gstNumber", "walletBalance", "status", "role"];
     const updates = {};
     allowed.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
 
@@ -177,6 +229,27 @@ router.patch("/:id", async (req, res) => {
     });
 
     res.json({ success: true, client });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ── DELETE /api/admin/clients/:id ─────────────────────────────
+// Remove a client record entirely (does not touch past orders)
+router.delete("/:id", async (req, res) => {
+  try {
+    const client = await Client.findByIdAndDelete(req.params.id);
+    if (!client) return res.status(404).json({ success: false, message: "Client not found" });
+
+    await logAction(req, {
+      action:      "DELETE",
+      entity:      "Client",
+      entityId:    req.params.id,
+      entityRef:   client.name,
+      description: `Deleted client ${client.name}`,
+    });
+
+    res.json({ success: true, message: "Client deleted" });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
   }

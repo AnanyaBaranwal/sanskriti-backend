@@ -4,9 +4,12 @@ const ExcelJS  = require("exceljs");
 const crypto   = require("crypto");
 const multer   = require("multer");
 const path     = require("path");
+const mongoose = require("mongoose");
 
-const Order   = require("../../models/Order.model");
-const Client  = require("../../models/Client.model");
+const Order       = require("../../models/Order.model");
+const Client      = require("../../models/Client.model");
+const Wallet      = require("../../models/Wallet.model");
+const Transaction = require("../../models/Transaction.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
 const { findOrCreateClient, refreshClientStats } = require("../../utils/clientStats");
@@ -39,6 +42,16 @@ const orderHash = (phone, items, date) => {
   const itemKey = items.map(i => `${i.name}:${i.quantity}`).sort().join("|");
   const dayKey  = new Date(date).toISOString().slice(0, 10);
   return crypto.createHash("md5").update(`${phone}|${itemKey}|${dayKey}`).digest("hex");
+};
+
+// ── Helper: flag product-cost refund as pending admin approval ──
+// Only flags — never touches the wallet. Wallet is credited only via
+// PATCH /api/admin/refunds/:id/approve.
+const flagRefundPending = (order) => {
+  if (!order.walletDeducted || order.walletRefunded || order.refundStatus === "PENDING") return null;
+  order.refundStatus         = "PENDING";
+  order.refundEligibleAmount = order.subtotal;
+  return `Refund of ₹${order.subtotal.toLocaleString("en-IN")} (product cost) flagged — pending admin approval`;
 };
 
 // ── GET /api/admin/orders ─────────────────────────────────────
@@ -205,6 +218,9 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
 
 // ── PATCH /api/admin/orders/bulk-status ──────────────────────
 // Body: { orderIds: [], status: "SHIPPED", note: "..." }
+// NOTE: bulk status changes do NOT trigger wallet debit/refund logic —
+// use the single-order PATCH /:id/status endpoint for CONFIRMED/CANCELLED
+// transitions that should move money.
 router.patch("/bulk-status", async (req, res) => {
   try {
     const { orderIds, status, note } = req.body;
@@ -258,42 +274,110 @@ router.patch("/bulk-status", async (req, res) => {
 });
 
 // ── PATCH /api/admin/orders/:id/status ───────────────────────
-// Single order status update (admin can update any seller's order)
+// Single order status update (admin can update any seller's order).
+// CONFIRMED (first time) → debits full order.total from the seller's wallet.
+// CANCELLED → flags the product-cost (subtotal) as pending refund approval;
+// nothing is credited until admin approves via PATCH /api/admin/refunds/:id/approve.
 router.patch("/:id/status", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { status, note } = req.body;
     const validStatuses = ["PENDING","CONFIRMED","PROCESSING","PACKED","SHIPPED","DELIVERED","CANCELLED","RETURNED"];
+    const newStatus = status?.toUpperCase();
 
-    if (!validStatuses.includes(status?.toUpperCase())) {
+    if (!validStatuses.includes(newStatus)) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: `Invalid status` });
     }
 
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
 
     const before = order.status;
-    order.status = status.toUpperCase();
-    order.statusHistory.push({ status: status.toUpperCase(), note: note || `Status updated`, changedAt: new Date() });
-    await order.save();
+    let walletMessage = null;
+
+    // ── Deduct full order total from seller wallet the first time it's CONFIRMED ──
+    if (newStatus === "CONFIRMED" && !order.walletDeducted) {
+      const wallet = await Wallet.findOne({ sellerId: order.sellerId }).session(session);
+      const currentBalance = wallet?.balance || 0;
+      const amount = order.total;
+
+      if (currentBalance < amount) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot confirm order — seller wallet balance (₹${currentBalance.toLocaleString("en-IN")}) is less than the order amount (₹${amount.toLocaleString("en-IN")}). Ask the seller to add funds first.`,
+        });
+      }
+
+      const balanceBefore = wallet.balance;
+      const balanceAfter  = balanceBefore - amount;
+
+      await Wallet.findByIdAndUpdate(
+        wallet._id,
+        { $inc: { balance: -amount, totalDebited: amount } },
+        { session }
+      );
+
+      await Transaction.create([{
+        walletId:      wallet._id,
+        sellerId:      order.sellerId,
+        type:          "DEBIT",
+        amount,
+        balanceBefore,
+        balanceAfter,
+        description:   `Order ${order.orderNumber} confirmed by admin`,
+        reference:     `ORDER-${order.orderNumber}`,
+        category:      "ORDER_PAYMENT",
+        status:        "COMPLETED",
+        metadata:      { orderId: order._id },
+      }], { session });
+
+      order.walletDeducted       = true;
+      order.walletDeductedAmount = amount;
+      walletMessage = `₹${amount.toLocaleString("en-IN")} deducted from seller wallet`;
+    }
+
+    // ── Flag product-cost refund as pending admin approval on cancellation ──
+    if (newStatus === "CANCELLED") {
+      const msg = flagRefundPending(order);
+      if (msg) walletMessage = msg;
+    }
+
+    order.status = newStatus;
+    order.statusHistory.push({ status: newStatus, note: note || walletMessage || `Status updated`, changedAt: new Date() });
+    await order.save({ session });
+
+    await session.commitTransaction();
 
     await logAction(req, {
       action:      "STATUS_CHANGE",
       entity:      "Order",
       entityId:    order._id,
       entityRef:   order.orderNumber,
-      description: `Order ${order.orderNumber} status: ${before} → ${status.toUpperCase()}`,
+      description: `Order ${order.orderNumber} status: ${before} → ${newStatus}${walletMessage ? ` (${walletMessage})` : ""}`,
       before:      { status: before },
-      after:       { status: status.toUpperCase() },
+      after:       { status: newStatus },
     });
 
-    res.json({ success: true, order });
+    res.json({ success: true, order, walletMessage });
   } catch (err) {
-    res.status(500).json({ success: false, message: "Server error" });
+    await session.abortTransaction();
+    console.error("[order status update]", err);
+    res.status(500).json({ success: false, message: err.message || "Server error" });
+  } finally {
+    session.endSession();
   }
 });
 
 // ── PATCH /api/admin/orders/:id/return ───────────────────────
-// Mark order as RETURNED with reason
+// Mark order as RETURNED with reason. Flags the product-cost (subtotal)
+// as pending seller-wallet refund — admin must approve via PATCH /api/admin/refunds/:id/approve.
 router.patch("/:id/return", async (req, res) => {
   try {
     const { reason, refundAmount } = req.body;
@@ -313,11 +397,13 @@ router.patch("/:id/return", async (req, res) => {
     order.paymentStatus   = refundAmount ? "REFUNDED" : order.paymentStatus;
     order.returnReason    = reason || "Return requested";
     order.returnedAt      = new Date();
-    order.refundAmount    = refundAmount || 0;
+    order.refundAmount    = refundAmount || 0; // buyer-side refund, unrelated to seller wallet
+
+    const walletMessage = flagRefundPending(order);
 
     order.statusHistory.push({
       status:    "RETURNED",
-      note:      `Return: ${reason || "No reason provided"}${refundAmount ? ` | Refund: ₹${refundAmount}` : ""}`,
+      note:      `Return: ${reason || "No reason provided"}${refundAmount ? ` | Buyer refund: ₹${refundAmount}` : ""}${walletMessage ? ` | ${walletMessage}` : ""}`,
       changedAt: new Date(),
     });
 
@@ -331,12 +417,12 @@ router.patch("/:id/return", async (req, res) => {
       entity:      "Order",
       entityId:    order._id,
       entityRef:   order.orderNumber,
-      description: `Order ${order.orderNumber} marked as RETURNED. Reason: ${reason}`,
+      description: `Order ${order.orderNumber} marked as RETURNED. Reason: ${reason}${walletMessage ? ` (${walletMessage})` : ""}`,
       before:      { status: before },
       after:       { status: "RETURNED", returnReason: reason, refundAmount },
     });
 
-    res.json({ success: true, message: "Order marked as returned", order });
+    res.json({ success: true, message: "Order marked as returned", order, walletMessage });
   } catch (err) {
     console.error("[return]", err);
     res.status(500).json({ success: false, message: "Server error" });

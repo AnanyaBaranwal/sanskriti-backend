@@ -2,8 +2,8 @@ const mongoose = require("mongoose");
 
 const noteSchema = new mongoose.Schema(
   {
-    text:      { type: String, required: true, trim: true },
-    addedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "Seller" },
+    text:        { type: String, required: true, trim: true },
+    addedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "Seller" },
     addedByName: { type: String },
   },
   { timestamps: true }
@@ -11,10 +11,15 @@ const noteSchema = new mongoose.Schema(
 
 const clientSchema = new mongoose.Schema(
   {
-    // Core identity — extracted from order buyer
+    // Core identity — extracted from order buyer, or added manually by admin
     name:  { type: String, required: true, trim: true },
     phone: { type: String, required: true, trim: true },
     email: { type: String, trim: true, lowercase: true, default: null },
+
+    // Business / company details (shown in User Management style table)
+    company:   { type: String, trim: true, default: "" },
+    gstNumber: { type: String, trim: true, uppercase: true, default: "" },
+
     address: {
       street:  String,
       city:    String,
@@ -27,6 +32,25 @@ const clientSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Seller",
       required: true,
+    },
+
+    // Wallet balance held for this client (advance / credit note balance)
+    walletBalance: { type: Number, default: 0 },
+
+    // Account status — shown as Active/Inactive badge
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+    },
+
+    // Fixed role label for now — all Client records are marketplace customers.
+    // Kept as a real field (rather than hardcoded in the UI) so it can be
+    // extended later (e.g. "wholesale", "vip") without another migration.
+    role: {
+      type: String,
+      enum: ["customer", "wholesale", "vip"],
+      default: "customer",
     },
 
     // Internal notes added by admin/seller
@@ -59,8 +83,9 @@ clientSchema.set("toObject", { virtuals: true });
 clientSchema.index({ sellerId: 1, phone: 1 }, { unique: true });
 clientSchema.index({ sellerId: 1, name: 1 });
 clientSchema.index({ phone: 1 });
+clientSchema.index({ status: 1 });
 
-// Text index for global search
-clientSchema.index({ name: "text", phone: "text", email: "text" });
+// Text index for global search — now includes company + GST
+clientSchema.index({ name: "text", phone: "text", email: "text", company: "text", gstNumber: "text" });
 
 module.exports = mongoose.model("Client", clientSchema);
