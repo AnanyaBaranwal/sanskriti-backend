@@ -35,6 +35,7 @@ const adminRolesRoutes       = require("./routes/admin/roles.admin.routes");
 const adminBulkInvoiceRoutes = require("./routes/admin/bulk_invoice.admin.routes");
 const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
 const adminCategoriesRoutes  = require("./routes/admin/categories.admin.routes");
+const adminSellersImportRoutes = require("./routes/admin/sellers.import.routes");
 
 const app = express();
 
@@ -125,11 +126,13 @@ app.use("/api/admin/audit-logs", adminAuditRoutes);
 app.use("/api/admin/ai",         adminAIRoutes);
 app.use("/api/admin/notify",     adminNotifyRoutes);
 app.use("/api/admin/refunds",    require("./routes/admin/refunds.admin.routes"));
+app.use("/api/admin/returns", require("./routes/admin/returns.admin.routes"));
 app.use("/api/admin/duplicates",    adminDuplicateRoutes);
 app.use("/api/admin/roles",         adminRolesRoutes);
 app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);
 app.use("/api/admin/reorder",       adminReorderRoutes);
 app.use("/api/admin/categories",    adminCategoriesRoutes);
+app.use("/api/admin/sellers", adminSellersImportRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
