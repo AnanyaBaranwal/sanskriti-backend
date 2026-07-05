@@ -1,7 +1,7 @@
 const express  = require("express");
 const router   = express.Router();
 
-const Seller = require("../../models/Seller.model");
+const Seller = require("../../models/kyc.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
 

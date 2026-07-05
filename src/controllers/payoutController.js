@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const PayoutRequest = require("../models/PayoutRequest.model");
 const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
-const Seller = require("../models/Seller.model");
+const Seller = require("../models/kyc.model");
 
 // ─── POST /api/payouts/request ────────────────────────────────────────────────
 exports.requestPayout = async (req, res) => {

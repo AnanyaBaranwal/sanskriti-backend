@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const Seller = require("../models/Seller.model");
+const Seller = require("../models/kyc.model");
 const { sendVerificationEmail } = require("../services/email.service");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

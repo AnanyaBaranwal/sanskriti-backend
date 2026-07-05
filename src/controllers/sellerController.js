@@ -1,4 +1,4 @@
-const Seller = require("../models/Seller.model");
+const Seller = require("../models/kyc.model");
 const bcrypt = require("bcryptjs");
 
 // ─── GET /api/seller/profile ──────────────────────────────────────────────────

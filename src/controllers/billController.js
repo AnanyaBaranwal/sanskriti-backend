@@ -2,7 +2,7 @@ const fs   = require("fs");
 const path = require("path");
 const Bill   = require("../models/Bill.model");
 const Order  = require("../models/Order.model");
-const Seller = require("../models/Seller.model");
+const Seller = require("../models/kyc.model");
 
 // ── Ensure uploads/bills dir ──────────────────────────────────
 const ensureBillsDir = () => {

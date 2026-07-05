@@ -3,7 +3,7 @@ const nodemailer  = require("nodemailer");
 const Product     = require("../models/Product.model");
 const Bill        = require("../models/Bill.model");
 const Order       = require("../models/Order.model");
-const Seller      = require("../models/Seller.model");
+const Seller      = require("../models/kyc.model");
 
 // Reuse same transporter config as email.service.js
 const transporter = nodemailer.createTransport({

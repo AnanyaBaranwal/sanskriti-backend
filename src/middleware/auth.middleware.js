@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const Seller = require("../models/Seller.model");
+const Seller = require("../models/kyc.model");
 
 // Verify access token from Authorization header
 exports.protect = async (req, res, next) => {
