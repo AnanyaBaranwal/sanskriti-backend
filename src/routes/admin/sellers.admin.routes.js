@@ -9,10 +9,7 @@ router.use(protect, restrictTo("admin"));
 
 const VALID_KYC_STATUSES = ["not_submitted", "under_review", "approved", "rejected"];
 
-// ── GET /api/admin/sellers ────────────────────────────────────
-// List all sellers with search + KYC filter + pagination.
-// Also returns kycCounts computed across the FULL collection (not just
-// the current page/filter), so the stat cards on the frontend stay accurate.
+// GET /api/admin/sellers
 router.get("/", async (req, res) => {
   try {
     const {
@@ -72,13 +69,11 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ── GET /api/admin/sellers/:id ────────────────────────────────
-// Full seller detail — includes all kyc document paths for review
+// GET /api/admin/sellers/:id
 router.get("/:id", async (req, res) => {
   try {
     const seller = await Seller.findById(req.params.id).lean();
     if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
-
     res.json({ success: true, seller });
   } catch (err) {
     console.error("[admin/sellers detail]", err);
@@ -86,9 +81,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// ── PATCH /api/admin/sellers/:id/kyc ──────────────────────────
-// Approve or reject a seller's KYC submission.
-// Body: { status: "approved" | "rejected" | "under_review" | "not_submitted", note?: string }
+// PATCH /api/admin/sellers/:id/kyc
 router.patch("/:id/kyc", async (req, res) => {
   try {
     const { status, note } = req.body;
@@ -110,7 +103,6 @@ router.patch("/:id/kyc", async (req, res) => {
     seller.kyc.reviewedAt   = new Date();
     seller.kyc.reviewedBy   = req.seller?.name || "Admin";
 
-    // Approving KYC also activates the account so the seller can fully log in.
     if (status === "approved" && seller.status === "pending") {
       seller.status = "active";
     }
@@ -130,6 +122,42 @@ router.patch("/:id/kyc", async (req, res) => {
     res.json({ success: true, message: `KYC ${status.replace("_", " ")}`, seller });
   } catch (err) {
     console.error("[admin/sellers kyc update]", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// PATCH /api/admin/sellers/:id/status
+// Activate / suspend a seller account (admin accounts are protected)
+router.patch("/:id/status", async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!["active", "suspended"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const seller = await Seller.findById(req.params.id);
+    if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
+    if (seller.role === "admin") {
+      return res.status(403).json({ success: false, message: "Admin accounts cannot be suspended" });
+    }
+
+    const before = seller.status;
+    seller.status = status;
+    await seller.save();
+
+    await logAction(req, {
+      action:      "STATUS_CHANGE",
+      entity:      "Seller",
+      entityId:    seller._id,
+      entityRef:   seller.name,
+      description: `Account for ${seller.name} (${seller.email}): ${before} → ${status}`,
+      before:      { status: before },
+      after:       { status },
+    });
+
+    res.json({ success: true, message: `Account ${status}`, seller });
+  } catch (err) {
+    console.error("[admin/sellers status update]", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
