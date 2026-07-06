@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
-    // Whose wallet this transaction belongs to
+    // NEW — whose wallet this transaction belongs to
     walletOwnerType: {
       type: String,
       enum: ["SELLER", "CLIENT"],
@@ -13,17 +13,23 @@ const transactionSchema = new mongoose.Schema(
     walletId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Wallet",
-      default: null, // only used for SELLER transactions (Wallet doc)
+      required: function () {
+        return this.walletOwnerType === "SELLER";
+      },
     },
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Seller",
-      default: null, // set for SELLER transactions
+      required: function () {
+        return this.walletOwnerType === "SELLER";
+      },
     },
+
+    // NEW — set for CLIENT transactions (refunds credited to client wallet)
     clientId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
-      default: null, // set for CLIENT transactions (refunds credited to wallet)
+      default: null,
     },
 
     type: {
@@ -51,7 +57,7 @@ const transactionSchema = new mongoose.Schema(
     },
     reference: {
       type: String,
-      trim: true, // payment gateway reference ID
+      trim: true, // payment gateway reference ID, or REFUND-<returnId>
     },
     category: {
       type: String,
@@ -64,17 +70,18 @@ const transactionSchema = new mongoose.Schema(
       default: "COMPLETED",
     },
     metadata: {
-      type: mongoose.Schema.Types.Mixed, // e.g. { orderId, payoutRequestId, returnId }
+      type: mongoose.Schema.Types.Mixed, // extra info like orderId, returnId, gstExcluded etc
       default: {},
     },
   },
   { timestamps: true }
 );
 
-// Indexes for fast queries
+// Index for fast queries
 transactionSchema.index({ sellerId: 1, createdAt: -1 });
 transactionSchema.index({ walletId: 1, createdAt: -1 });
 transactionSchema.index({ clientId: 1, createdAt: -1 });
 transactionSchema.index({ "metadata.orderId": 1 });
+transactionSchema.index({ "metadata.returnId": 1 });
 
 module.exports = mongoose.model("Transaction", transactionSchema);

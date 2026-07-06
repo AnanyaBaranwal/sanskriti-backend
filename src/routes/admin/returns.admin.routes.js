@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 
 const Return      = require("../../models/Return.model");
 const Order       = require("../../models/Order.model");
-const Wallet       = require("../../models/Wallet.model");
+const Client       = require("../../models/Client.model");
 const Transaction  = require("../../models/Transaction.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
@@ -97,6 +97,8 @@ router.get("/", async (req, res) => {
 // ── POST /api/admin/returns ──────────────────────────────────────
 // Create a return request against an existing order. itemName is
 // optional — omit or pass "ALL" to return the whole order.
+// CHANGED: now resolves clientId from order.clientId and stores it,
+// so the refund step below knows whose wallet to credit.
 router.post("/", async (req, res) => {
   try {
     const { orderId, itemName, reason, images } = req.body;
@@ -114,11 +116,19 @@ router.post("/", async (req, res) => {
       });
     }
 
+    if (!order.clientId) {
+      return res.status(400).json({
+        success: false,
+        message: "This order has no linked client record — cannot process a wallet refund for it.",
+      });
+    }
+
     const { orderAmount, productAmount, gstAmount } = computeRefundSplit(order, itemName);
 
     const ret = await Return.create({
       orderId:     order._id,
       orderNumber: order.orderNumber,
+      clientId:    order.clientId,
       sellerId:    order.sellerId,
       buyer: {
         name:  order.buyer?.name,
@@ -288,11 +298,11 @@ router.patch("/:id/notes", async (req, res) => {
 });
 
 // ── PATCH /api/admin/returns/:id/refund ──────────────────────────
-// Actually moves money. Re-validates the cap a SECOND time right
-// before crediting the wallet — defense in depth, in case anything
-// between approve and refund could have altered the record. Wraps
-// the wallet credit + return update + order update in one Mongo
-// transaction so partial failures can't leave inconsistent state.
+// CHANGED: credits the CLIENT's wallet (Client.walletBalance), not the
+// seller's Wallet. Re-validates the cap a SECOND time right before
+// crediting — defense in depth. Wraps the wallet credit + return update
+// + order update in one Mongo transaction so partial failures can't
+// leave inconsistent state.
 router.patch("/:id/refund", async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -315,31 +325,35 @@ router.patch("/:id/refund", async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({ success: false, message: "Refund amount exceeds refundable product amount. Aborting for safety." });
     }
-
-    let wallet = await Wallet.findOne({ sellerId: ret.sellerId }).session(session);
-    if (!wallet) {
-      const created = await Wallet.create([{ sellerId: ret.sellerId }], { session });
-      wallet = created[0];
+    if (!ret.clientId) {
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "This return has no linked client — cannot credit a wallet. Contact support to resolve manually." });
     }
 
-    const balanceBefore = wallet.balance;
+    const client = await Client.findById(ret.clientId).session(session);
+    if (!client) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: "Linked client record not found" });
+    }
+
+    const balanceBefore = client.walletBalance;
     const balanceAfter  = balanceBefore + ret.refundAmount;
 
-    await Wallet.findByIdAndUpdate(
-      wallet._id,
-      { $inc: { balance: ret.refundAmount, totalCredited: ret.refundAmount } },
+    await Client.findByIdAndUpdate(
+      client._id,
+      { $inc: { walletBalance: ret.refundAmount, totalRefunded: ret.refundAmount } },
       { session }
     );
 
     await Transaction.create(
       [{
-        walletId:    wallet._id,
-        sellerId:    ret.sellerId,
+        walletOwnerType: "CLIENT",
+        clientId:    client._id,
         type:        "CREDIT",
         amount:      ret.refundAmount,
         balanceBefore,
         balanceAfter,
-        description: `Refund processed — ${ret.orderNumber} (${ret.itemName}) — product amount only, GST excluded`,
+        description: `Refund credited — ${ret.orderNumber} (${ret.itemName}) — product amount only, GST excluded`,
         reference:   `REFUND-${ret._id}`,
         category:    "REFUND",
         status:      "COMPLETED",
@@ -350,7 +364,7 @@ router.patch("/:id/refund", async (req, res) => {
 
     ret.status = "REFUNDED";
     ret.resolvedAt = new Date();
-    ret.statusHistory.push({ status: "REFUNDED", note: `₹${ret.refundAmount} credited to seller wallet`, changedAt: new Date() });
+    ret.statusHistory.push({ status: "REFUNDED", note: `₹${ret.refundAmount} credited to client wallet`, changedAt: new Date() });
     await ret.save({ session });
 
     await Order.findByIdAndUpdate(
@@ -368,11 +382,16 @@ router.patch("/:id/refund", async (req, res) => {
 
     await logAction(req, {
       action: "STATUS_CHANGE", entity: "Return", entityId: ret._id, entityRef: ret.orderNumber,
-      description: `Refund of ₹${ret.refundAmount} processed for ${ret.orderNumber} (GST ₹${ret.gstAmount} excluded, not refunded)`,
+      description: `Refund of ₹${ret.refundAmount} credited to client wallet for ${ret.orderNumber} (GST ₹${ret.gstAmount} excluded, not refunded)`,
       before: { status: "APPROVED" }, after: { status: "REFUNDED", refundAmount: ret.refundAmount },
     });
 
-    res.json({ success: true, message: `₹${ret.refundAmount} credited to seller wallet`, return: ret, newBalance: balanceAfter });
+    res.json({
+      success: true,
+      message: `₹${ret.refundAmount.toLocaleString("en-IN")} credited to client's wallet`,
+      return: ret,
+      newClientBalance: balanceAfter,
+    });
   } catch (err) {
     await session.abortTransaction();
     console.error("[returns:refund]", err);

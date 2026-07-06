@@ -41,8 +41,9 @@ const clientSchema = new mongoose.Schema(
     lastOrderAt: { type: Date, default: null },
 
     // ── Wallet — NEW ─────────────────────────────────────────────
-    // Store-credit balance. Clients don't log in themselves, so this is
-    // viewed/managed from the admin panel and applied at next checkout.
+    // Store-credit balance from approved product returns. Clients don't
+    // log in themselves — this is viewed/managed from the admin panel
+    // and applied as credit at the client's next order.
     walletBalance: {
       type: Number,
       default: 0,

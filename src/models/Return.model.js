@@ -7,32 +7,39 @@ const returnSchema = new mongoose.Schema(
       ref: "Order",
       required: true,
     },
+    orderNumber: { type: String, required: true },
+
+    // NEW — resolved from order.clientId at creation time.
+    // This is what lets /refund credit the correct client's wallet.
     clientId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
-      required: true,
+      default: null, // null only for legacy orders that predate the Client model
     },
+
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Seller",
       required: true,
     },
 
-    // Item being returned
-    itemName: { type: String, required: true, trim: true },
-    itemPrice: { type: Number, required: true }, // unit price at time of order
-    quantity: { type: Number, required: true, min: 1 },
-
-    // Money — locked at creation time, never recalculated later.
-    // productAmount = item.total minus this item's proportional share of
-    // order.discountAmount. Excludes tax and shipping entirely (flat/order-level
-    // tax is never refunded on a partial return). This is the hard ceiling
-    // that refundAmount can never exceed.
-    productAmount: {
-      type: Number,
-      required: true,
-      min: [0, "Product amount cannot be negative"],
+    // Snapshot of buyer info at time of return (survives client record edits/merges)
+    buyer: {
+      name: { type: String, required: true },
+      email: { type: String, default: "" },
+      phone: { type: String, required: true },
     },
+
+    // "ALL" = whole order returned, otherwise the specific item name
+    itemName: { type: String, required: true, default: "ALL" },
+
+    // Money — locked at creation time via computeRefundSplit(), never recalculated later.
+    // productAmount is the hard refund ceiling. gstAmount is shown for transparency
+    // only and is NEVER refunded (flat/order-level tax).
+    orderAmount: { type: Number, required: true },   // productAmount + gstAmount, for display
+    productAmount: { type: Number, required: true, min: [0, "Product amount cannot be negative"] },
+    gstAmount: { type: Number, required: true, default: 0 },
+
     refundAmount: {
       type: Number,
       default: 0,
@@ -47,6 +54,7 @@ const returnSchema = new mongoose.Schema(
     reason: { type: String, trim: true, default: "" },
     notes: { type: String, trim: true, default: "" },
     disputeNote: { type: String, trim: true, default: "" },
+    images: { type: [String], default: [] },
 
     status: {
       type: String,
@@ -54,15 +62,16 @@ const returnSchema = new mongoose.Schema(
       default: "PENDING",
     },
 
+    statusHistory: [
+      {
+        status: String,
+        note: String,
+        changedAt: { type: Date, default: Date.now },
+      },
+    ],
+
     receivedAt: { type: Date, default: null },
     resolvedAt: { type: Date, default: null },
-
-    // Set once the linked PayoutRequest (type: CLIENT_REFUND) is created
-    payoutRequestId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "PayoutRequest",
-      default: null,
-    },
   },
   { timestamps: true }
 );
@@ -71,5 +80,6 @@ returnSchema.index({ sellerId: 1, createdAt: -1 });
 returnSchema.index({ clientId: 1 });
 returnSchema.index({ orderId: 1 });
 returnSchema.index({ status: 1 });
+returnSchema.index({ orderNumber: "text", "buyer.name": "text", "buyer.phone": "text", itemName: "text" });
 
 module.exports = mongoose.model("Return", returnSchema);
