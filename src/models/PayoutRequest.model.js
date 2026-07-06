@@ -2,57 +2,88 @@ const mongoose = require("mongoose");
 
 const payoutRequestSchema = new mongoose.Schema(
   {
+    // ── Type — NEW ──────────────────────────────────────────────
+    // SELLER_PAYOUT = seller withdraws wallet balance to their bank account
+    // CLIENT_REFUND = admin credits a returned-order refund to a client's wallet
+    type: {
+      type: String,
+      enum: ["SELLER_PAYOUT", "CLIENT_REFUND"],
+      default: "SELLER_PAYOUT",
+    },
+
+    // Required only for SELLER_PAYOUT
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Seller",
-      required: true,
+      required: function () {
+        return this.type === "SELLER_PAYOUT";
+      },
     },
+
+    // Required only for CLIENT_REFUND — NEW
+    clientId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      default: null,
+    },
+    orderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+    },
+    returnId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Return",
+      default: null,
+    },
+
     amount: {
       type: Number,
       required: true,
-      min: [100, "Minimum payout amount is ₹100"],
+      min: [1, "Amount must be greater than 0"],
     },
-    status: {
-      type: String,
-      enum: ["PENDING", "APPROVED", "REJECTED", "PROCESSED"],
-      default: "PENDING",
-    },
+
+    // Only required for SELLER_PAYOUT
     bankDetails: {
       accountNumber: {
         type: String,
-        required: true,
+        required: function () {
+          return this.type === "SELLER_PAYOUT";
+        },
       },
       ifscCode: {
         type: String,
-        required: true,
-        uppercase: true,
+        required: function () {
+          return this.type === "SELLER_PAYOUT";
+        },
       },
-      accountName: {
-        type: String,
-        required: true,
-      },
-      bankName: String,
+      accountName: { type: String },
+      bankName: { type: String, default: "" },
     },
-    adminNote: {
+
+    status: {
       type: String,
-      trim: true,
+      enum: ["PENDING", "PROCESSED", "REJECTED"],
+      default: "PENDING",
     },
-    sellerNote: {
-      type: String,
-      trim: true,
-    },
-    processedAt: Date,
-    rejectedAt: Date,
+
+    sellerNote: { type: String, trim: true, default: "" },
+    adminNote: { type: String, trim: true, default: "" },
+
     transactionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Transaction",
+      default: null,
     },
+
+    processedAt: { type: Date, default: null },
+    rejectedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
-// Index for fast admin queries
-payoutRequestSchema.index({ status: 1, createdAt: -1 });
-payoutRequestSchema.index({ sellerId: 1, createdAt: -1 });
+payoutRequestSchema.index({ sellerId: 1, status: 1 });
+payoutRequestSchema.index({ clientId: 1 });
+payoutRequestSchema.index({ type: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model("PayoutRequest", payoutRequestSchema);

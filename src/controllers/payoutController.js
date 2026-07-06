@@ -2,21 +2,16 @@ const mongoose = require("mongoose");
 const PayoutRequest = require("../models/PayoutRequest.model");
 const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
-const Seller = require("../models/kyc.model");
+const Seller = require("../models/Seller.model");
+const Client = require("../models/Client.model");
+const Order = require("../models/Order.model");
 
-// ─── POST /api/payouts/request ────────────────────────────────────────────────
+// ─── POST /api/payouts/request ─────────────────────────────────────────────────
+// SELLER-SIDE: request a bank payout from wallet balance
 exports.requestPayout = async (req, res) => {
   try {
-    const {
-      amount,
-      accountNumber,
-      ifscCode,
-      accountName,
-      bankName,
-      sellerNote,
-    } = req.body;
+    const { amount, accountNumber, ifscCode, accountName, bankName, sellerNote } = req.body;
 
-    // Validation
     if (!amount || amount < 100) {
       return res.status(400).json({
         success: false,
@@ -31,7 +26,6 @@ exports.requestPayout = async (req, res) => {
       });
     }
 
-    // Check wallet balance
     const wallet = await Wallet.findOne({ sellerId: req.seller.id });
 
     if (!wallet || wallet.balance < amount) {
@@ -42,9 +36,9 @@ exports.requestPayout = async (req, res) => {
       });
     }
 
-    // Check no pending payout already exists
     const pendingPayout = await PayoutRequest.findOne({
       sellerId: req.seller.id,
+      type: "SELLER_PAYOUT",
       status: "PENDING",
     });
 
@@ -56,8 +50,8 @@ exports.requestPayout = async (req, res) => {
       });
     }
 
-    // Create payout request
     const payoutRequest = await PayoutRequest.create({
+      type: "SELLER_PAYOUT",
       sellerId: req.seller.id,
       amount,
       bankDetails: {
@@ -80,7 +74,7 @@ exports.requestPayout = async (req, res) => {
   }
 };
 
-// ─── GET /api/payouts/my ──────────────────────────────────────────────────────
+// ─── GET /api/payouts/my ───────────────────────────────────────────────────────
 exports.getMyPayouts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -88,26 +82,18 @@ exports.getMyPayouts = async (req, res) => {
     const skip = (page - 1) * limit;
     const { status } = req.query;
 
-    const filter = { sellerId: req.seller.id };
+    const filter = { sellerId: req.seller.id, type: "SELLER_PAYOUT" };
     if (status) filter.status = status.toUpperCase();
 
     const [payouts, total] = await Promise.all([
-      PayoutRequest.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
+      PayoutRequest.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
       PayoutRequest.countDocuments(filter),
     ]);
 
     res.status(200).json({
       success: true,
       payouts,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
     console.error("Get payouts error:", error);
@@ -115,7 +101,7 @@ exports.getMyPayouts = async (req, res) => {
   }
 };
 
-// ─── GET /api/payouts/:id ─────────────────────────────────────────────────────
+// ─── GET /api/payouts/:id ──────────────────────────────────────────────────────
 exports.getPayoutById = async (req, res) => {
   try {
     const payout = await PayoutRequest.findOne({
@@ -124,10 +110,7 @@ exports.getPayoutById = async (req, res) => {
     });
 
     if (!payout) {
-      return res.status(404).json({
-        success: false,
-        message: "Payout request not found",
-      });
+      return res.status(404).json({ success: false, message: "Payout request not found" });
     }
 
     res.status(200).json({ success: true, payout });
@@ -136,7 +119,7 @@ exports.getPayoutById = async (req, res) => {
   }
 };
 
-// ─── DELETE /api/payouts/:id/cancel ──────────────────────────────────────────
+// ─── DELETE /api/payouts/:id/cancel ────────────────────────────────────────────
 exports.cancelPayout = async (req, res) => {
   try {
     const payout = await PayoutRequest.findOne({
@@ -145,10 +128,7 @@ exports.cancelPayout = async (req, res) => {
     });
 
     if (!payout) {
-      return res.status(404).json({
-        success: false,
-        message: "Payout request not found",
-      });
+      return res.status(404).json({ success: false, message: "Payout request not found" });
     }
 
     if (payout.status !== "PENDING") {
@@ -160,29 +140,30 @@ exports.cancelPayout = async (req, res) => {
 
     await PayoutRequest.findByIdAndDelete(payout._id);
 
-    res.status(200).json({
-      success: true,
-      message: "Payout request cancelled successfully",
-    });
+    res.status(200).json({ success: true, message: "Payout request cancelled successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
-// ─── ADMIN: GET /api/payouts/admin/all ────────────────────────────────────────
+// ─── ADMIN: GET /api/payouts/admin/all ─────────────────────────────────────────
+// Supports ?status=PENDING and ?type=SELLER_PAYOUT|CLIENT_REFUND
 exports.adminGetAllPayouts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-    const { status } = req.query;
+    const { status, type } = req.query;
 
     const filter = {};
     if (status) filter.status = status.toUpperCase();
+    if (type) filter.type = type.toUpperCase();
 
     const [payouts, total] = await Promise.all([
       PayoutRequest.find(filter)
         .populate("sellerId", "name email phone businessName")
+        .populate("clientId", "name phone")
+        .populate("orderId", "orderNumber")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -199,7 +180,10 @@ exports.adminGetAllPayouts = async (req, res) => {
   }
 };
 
-// ─── ADMIN: PATCH /api/payouts/admin/:id/approve ──────────────────────────────
+// ─── ADMIN: PATCH /api/payouts/admin/:id/approve ───────────────────────────────
+// Branches by payout.type:
+//   CLIENT_REFUND  -> credits the client's wallet (Client.walletBalance)
+//   SELLER_PAYOUT  -> debits the seller's wallet (existing bank-payout flow)
 exports.adminApprovePayout = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -222,10 +206,79 @@ exports.adminApprovePayout = async (req, res) => {
       });
     }
 
-    // Check seller still has enough balance
-    const wallet = await Wallet.findOne({
-      sellerId: payout.sellerId,
-    }).session(session);
+    // ══════════════════════════════════════════════════════════════════
+    // BRANCH 1 — CLIENT_REFUND: credit client wallet, no bank transfer
+    // ══════════════════════════════════════════════════════════════════
+    if (payout.type === "CLIENT_REFUND") {
+      const client = await Client.findById(payout.clientId).session(session);
+      if (!client) {
+        await session.abortTransaction();
+        return res.status(404).json({ success: false, message: "Client not found" });
+      }
+
+      const balanceBefore = client.walletBalance;
+      const balanceAfter = balanceBefore + payout.amount;
+
+      await Client.findByIdAndUpdate(
+        payout.clientId,
+        { $inc: { walletBalance: payout.amount, totalRefunded: payout.amount } },
+        { session }
+      );
+
+      const transaction = await Transaction.create(
+        [
+          {
+            walletOwnerType: "CLIENT",
+            clientId: payout.clientId,
+            type: "CREDIT",
+            amount: payout.amount,
+            balanceBefore,
+            balanceAfter,
+            description: `Refund credited — order ${payout.orderId}`,
+            reference: `REFUND-${payout._id}`,
+            category: "REFUND",
+            status: "COMPLETED",
+            metadata: {
+              orderId: payout.orderId,
+              payoutRequestId: payout._id,
+              returnId: payout.returnId,
+            },
+          },
+        ],
+        { session }
+      );
+
+      if (payout.orderId) {
+        await Order.findByIdAndUpdate(
+          payout.orderId,
+          { paymentStatus: "REFUNDED", refundAmount: payout.amount },
+          { session }
+        );
+      }
+
+      await PayoutRequest.findByIdAndUpdate(
+        payout._id,
+        {
+          status: "PROCESSED",
+          adminNote: adminNote || "Refund credited to client wallet",
+          processedAt: new Date(),
+          transactionId: transaction[0]._id,
+        },
+        { session }
+      );
+
+      await session.commitTransaction();
+      return res.status(200).json({
+        success: true,
+        message: `₹${payout.amount} credited to client's wallet`,
+        newClientBalance: balanceAfter,
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // BRANCH 2 — SELLER_PAYOUT: existing bank-payout flow (debit seller wallet)
+    // ══════════════════════════════════════════════════════════════════
+    const wallet = await Wallet.findOne({ sellerId: payout.sellerId }).session(session);
 
     if (!wallet || wallet.balance < payout.amount) {
       await session.abortTransaction();
@@ -238,22 +291,16 @@ exports.adminApprovePayout = async (req, res) => {
     const balanceBefore = wallet.balance;
     const balanceAfter = balanceBefore - payout.amount;
 
-    // Debit seller wallet
     await Wallet.findByIdAndUpdate(
       wallet._id,
-      {
-        $inc: {
-          balance: -payout.amount,
-          totalDebited: payout.amount,
-        },
-      },
+      { $inc: { balance: -payout.amount, totalDebited: payout.amount } },
       { session }
     );
 
-    // Create debit transaction
     const transaction = await Transaction.create(
       [
         {
+          walletOwnerType: "SELLER",
           walletId: wallet._id,
           sellerId: payout.sellerId,
           type: "DEBIT",
@@ -270,7 +317,6 @@ exports.adminApprovePayout = async (req, res) => {
       { session }
     );
 
-    // Update payout status
     await PayoutRequest.findByIdAndUpdate(
       payout._id,
       {
@@ -298,7 +344,8 @@ exports.adminApprovePayout = async (req, res) => {
   }
 };
 
-// ─── ADMIN: PATCH /api/payouts/admin/:id/reject ───────────────────────────────
+// ─── ADMIN: PATCH /api/payouts/admin/:id/reject ────────────────────────────────
+// Works identically for both SELLER_PAYOUT and CLIENT_REFUND — no money moves.
 exports.adminRejectPayout = async (req, res) => {
   try {
     const { adminNote } = req.body;
@@ -329,10 +376,7 @@ exports.adminRejectPayout = async (req, res) => {
       rejectedAt: new Date(),
     });
 
-    res.status(200).json({
-      success: true,
-      message: "Payout request rejected",
-    });
+    res.status(200).json({ success: true, message: "Payout request rejected" });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }

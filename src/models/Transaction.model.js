@@ -2,16 +2,30 @@ const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
+    // Whose wallet this transaction belongs to
+    walletOwnerType: {
+      type: String,
+      enum: ["SELLER", "CLIENT"],
+      required: true,
+      default: "SELLER",
+    },
+
     walletId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Wallet",
-      required: true,
+      default: null, // only used for SELLER transactions (Wallet doc)
     },
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Seller",
-      required: true,
+      default: null, // set for SELLER transactions
     },
+    clientId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      default: null, // set for CLIENT transactions (refunds credited to wallet)
+    },
+
     type: {
       type: String,
       enum: ["CREDIT", "DEBIT"],
@@ -50,15 +64,17 @@ const transactionSchema = new mongoose.Schema(
       default: "COMPLETED",
     },
     metadata: {
-      type: mongoose.Schema.Types.Mixed, // extra info like orderId, paymentId etc
+      type: mongoose.Schema.Types.Mixed, // e.g. { orderId, payoutRequestId, returnId }
       default: {},
     },
   },
   { timestamps: true }
 );
 
-// Index for fast queries
+// Indexes for fast queries
 transactionSchema.index({ sellerId: 1, createdAt: -1 });
 transactionSchema.index({ walletId: 1, createdAt: -1 });
+transactionSchema.index({ clientId: 1, createdAt: -1 });
+transactionSchema.index({ "metadata.orderId": 1 });
 
 module.exports = mongoose.model("Transaction", transactionSchema);

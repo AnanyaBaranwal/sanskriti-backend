@@ -1,8 +1,9 @@
 const mongoose = require("mongoose");
 const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
+const Client = require("../models/Client.model");
 
-// ─── Helper: get or create wallet ────────────────────────────────────────────
+// ─── Helper: get or create seller wallet ───────────────────────────────────────
 const getOrCreateWallet = async (sellerId) => {
   let wallet = await Wallet.findOne({ sellerId });
   if (!wallet) {
@@ -11,14 +12,15 @@ const getOrCreateWallet = async (sellerId) => {
   return wallet;
 };
 
-// ─── GET /api/wallet/balance ──────────────────────────────────────────────────
+// ─── GET /api/wallet/balance ────────────────────────────────────────────────────
+// SELLER-SIDE
 exports.getBalance = async (req, res) => {
   try {
     const wallet = await getOrCreateWallet(req.seller.id);
 
-    // Get last 5 transactions for quick preview
     const recentTransactions = await Transaction.find({
       sellerId: req.seller.id,
+      walletOwnerType: "SELLER",
     })
       .sort({ createdAt: -1 })
       .limit(5);
@@ -40,7 +42,8 @@ exports.getBalance = async (req, res) => {
   }
 };
 
-// ─── GET /api/wallet/transactions ─────────────────────────────────────────────
+// ─── GET /api/wallet/transactions ───────────────────────────────────────────────
+// SELLER-SIDE
 exports.getTransactions = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -48,16 +51,12 @@ exports.getTransactions = async (req, res) => {
     const skip = (page - 1) * limit;
     const { type, category } = req.query;
 
-    // Build filter
-    const filter = { sellerId: req.seller.id };
+    const filter = { sellerId: req.seller.id, walletOwnerType: "SELLER" };
     if (type) filter.type = type.toUpperCase();
     if (category) filter.category = category.toUpperCase();
 
     const [transactions, total] = await Promise.all([
-      Transaction.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
+      Transaction.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
       Transaction.countDocuments(filter),
     ]);
 
@@ -78,9 +77,9 @@ exports.getTransactions = async (req, res) => {
   }
 };
 
-// ─── POST /api/wallet/credit ──────────────────────────────────────────────────
+// ─── POST /api/wallet/credit ────────────────────────────────────────────────────
+// SELLER-SIDE (e.g. top-up)
 exports.credit = async (req, res) => {
-  // Use MongoDB session for atomic transaction
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -88,45 +87,33 @@ exports.credit = async (req, res) => {
     const { amount, description, reference, category } = req.body;
 
     if (!amount || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Amount must be greater than 0",
-      });
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "Amount must be greater than 0" });
     }
-
     if (!description) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required",
-      });
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "Description is required" });
     }
 
-    // Get wallet inside session
     let wallet = await Wallet.findOne({ sellerId: req.seller.id }).session(session);
     if (!wallet) {
-      wallet = await Wallet.create([{ sellerId: req.seller.id }], { session });
-      wallet = wallet[0];
+      const created = await Wallet.create([{ sellerId: req.seller.id }], { session });
+      wallet = created[0];
     }
 
     const balanceBefore = wallet.balance;
     const balanceAfter = balanceBefore + Number(amount);
 
-    // Update wallet balance
     await Wallet.findByIdAndUpdate(
       wallet._id,
-      {
-        $inc: {
-          balance: Number(amount),
-          totalCredited: Number(amount),
-        },
-      },
+      { $inc: { balance: Number(amount), totalCredited: Number(amount) } },
       { session }
     );
 
-    // Create transaction record
     const transaction = await Transaction.create(
       [
         {
+          walletOwnerType: "SELLER",
           walletId: wallet._id,
           sellerId: req.seller.id,
           type: "CREDIT",
@@ -142,7 +129,6 @@ exports.credit = async (req, res) => {
       { session }
     );
 
-    // Commit the transaction
     await session.commitTransaction();
 
     res.status(200).json({
@@ -160,7 +146,8 @@ exports.credit = async (req, res) => {
   }
 };
 
-// ─── POST /api/wallet/debit ───────────────────────────────────────────────────
+// ─── POST /api/wallet/debit ──────────────────────────────────────────────────────
+// SELLER-SIDE
 exports.debit = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -169,31 +156,20 @@ exports.debit = async (req, res) => {
     const { amount, description, reference, category } = req.body;
 
     if (!amount || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Amount must be greater than 0",
-      });
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "Amount must be greater than 0" });
     }
-
     if (!description) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required",
-      });
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "Description is required" });
     }
 
-    // Get wallet
     const wallet = await Wallet.findOne({ sellerId: req.seller.id }).session(session);
-
     if (!wallet) {
       await session.abortTransaction();
-      return res.status(404).json({
-        success: false,
-        message: "Wallet not found",
-      });
+      return res.status(404).json({ success: false, message: "Wallet not found" });
     }
 
-    // Check sufficient balance
     if (wallet.balance < Number(amount)) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -206,22 +182,16 @@ exports.debit = async (req, res) => {
     const balanceBefore = wallet.balance;
     const balanceAfter = balanceBefore - Number(amount);
 
-    // Update wallet
     await Wallet.findByIdAndUpdate(
       wallet._id,
-      {
-        $inc: {
-          balance: -Number(amount),
-          totalDebited: Number(amount),
-        },
-      },
+      { $inc: { balance: -Number(amount), totalDebited: Number(amount) } },
       { session }
     );
 
-    // Create transaction record
     const transaction = await Transaction.create(
       [
         {
+          walletOwnerType: "SELLER",
           walletId: wallet._id,
           sellerId: req.seller.id,
           type: "DEBIT",
@@ -254,12 +224,12 @@ exports.debit = async (req, res) => {
   }
 };
 
-// ─── GET /api/wallet/summary ──────────────────────────────────────────────────
+// ─── GET /api/wallet/summary ──────────────────────────────────────────────────────
+// SELLER-SIDE
 exports.getSummary = async (req, res) => {
   try {
     const wallet = await getOrCreateWallet(req.seller.id);
 
-    // Get this month's totals
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
@@ -268,6 +238,7 @@ exports.getSummary = async (req, res) => {
       {
         $match: {
           sellerId: new mongoose.Types.ObjectId(req.seller.id),
+          walletOwnerType: "SELLER",
           createdAt: { $gte: startOfMonth },
           status: "COMPLETED",
         },
@@ -299,6 +270,68 @@ exports.getSummary = async (req, res) => {
     });
   } catch (error) {
     console.error("Summary error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CLIENT WALLET — NEW. Admin-only, since clients don't log in themselves.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─── GET /api/clients/:clientId/wallet ──────────────────────────────────────────
+exports.getClientWallet = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const client = await Client.findById(clientId).select("name walletBalance totalRefunded");
+    if (!client) {
+      return res.status(404).json({ success: false, message: "Client not found" });
+    }
+
+    const filter = { clientId, walletOwnerType: "CLIENT" };
+
+    const [transactions, total] = await Promise.all([
+      Transaction.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Transaction.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      wallet: {
+        balance: client.walletBalance,
+        totalRefunded: client.totalRefunded,
+        clientName: client.name,
+      },
+      transactions,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error("Get client wallet error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── GET /api/orders/:orderId/refund-transaction ────────────────────────────────
+exports.getRefundTransactionByOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    const transaction = await Transaction.findOne({
+      "metadata.orderId": orderId,
+      category: "REFUND",
+      walletOwnerType: "CLIENT",
+    }).populate("clientId", "name phone");
+
+    if (!transaction) {
+      return res.status(404).json({ success: false, message: "No refund transaction found for this order" });
+    }
+
+    res.status(200).json({ success: true, transaction });
+  } catch (error) {
+    console.error("Get refund transaction error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };

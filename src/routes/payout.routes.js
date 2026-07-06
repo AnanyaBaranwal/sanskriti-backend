@@ -21,6 +21,7 @@ router.get("/:id", getPayoutById);
 router.delete("/:id/cancel", cancelPayout);
 
 // Admin only routes
+// adminGetAllPayouts now also accepts ?type=SELLER_PAYOUT|CLIENT_REFUND
 router.get("/admin/all", restrictTo("admin"), adminGetAllPayouts);
 router.patch("/admin/:id/approve", restrictTo("admin"), adminApprovePayout);
 router.patch("/admin/:id/reject", restrictTo("admin"), adminRejectPayout);
