@@ -3,16 +3,14 @@ const router = express.Router();
 const {
   createOrder,
   verifyPayment,
-  webhook,
   getPaymentHistory,
 } = require("../controllers/paymentController");
 const { protect } = require("../middleware/auth.middleware");
 
-// Webhook — NO auth (Razorpay calls this directly)
-// Must use raw body for signature verification
-router.post("/webhook", express.raw({ type: "application/json" }), webhook);
+// NOTE: /webhook is NOT here anymore — it's mounted directly in app.js
+// BEFORE the global express.json() parser, because it needs the raw
+// request body to verify Razorpay's signature.
 
-// Protected routes
 router.use(protect);
 router.post("/create-order", createOrder);
 router.post("/verify", verifyPayment);

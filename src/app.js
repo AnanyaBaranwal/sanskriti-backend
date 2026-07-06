@@ -84,7 +84,13 @@ app.use(cors({
 app.use("/api/auth", rateLimit({ windowMs: 15*60*1000, max: 10, standardHeaders: true, legacyHeaders: false, message: { success:false, message:"Too many login attempts." } }));
 app.use("/api",      rateLimit({ windowMs: 60*1000, max: 120, standardHeaders: true, legacyHeaders: false, message: { success:false, message:"Too many requests." } }));
 
-// ── Body parsers ──────────────────────────────────────────────
+// ── Razorpay webhook needs the RAW body for signature verification.
+// Must be registered BEFORE express.json(), otherwise the body gets
+// parsed/consumed first and signature verification will always fail.
+const { webhook } = require("./controllers/paymentController");
+app.post("/api/payments/webhook", express.raw({ type: "application/json" }), webhook);
+
+// ── Body parsers (everything else) ───────────────────────────
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
