@@ -84,7 +84,18 @@ router.get("/", async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    res.json({ success: true, total, page: Number(page), pages: Math.ceil(total / limit), orders });
+    // Status breakdown + revenue — used by the admin stat cards (Pending/Confirmed/Shipped/Delivered)
+    const stats = await Order.aggregate([
+      { $match: filter },
+      { $group: { _id: "$status", count: { $sum: 1 }, revenue: { $sum: "$total" } } },
+    ]);
+
+    res.json({
+      success: true,
+      orders,
+      pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / limit) },
+      stats,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
   }
