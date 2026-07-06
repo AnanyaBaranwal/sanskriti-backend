@@ -24,7 +24,8 @@ exports.createOrder = async (req, res) => {
     const order = await razorpay.orders.create({
       amount: Math.round(amount * 100), // paise
       currency: "INR",
-      receipt: `wallet_topup_${req.seller.id}_${Date.now()}`,
+      // Razorpay's receipt field has a hard 40-character limit — keep this short
+      receipt: `wtu_${req.seller.id.toString().slice(-8)}_${Date.now()}`,
       notes: { sellerId: String(req.seller.id) }, // webhook uses this to find the wallet
     });
 
@@ -35,11 +36,7 @@ exports.createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("Create order error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to create payment order",
-      debug: error?.error?.description || error?.message || "Unknown error", // TEMPORARY — remove after debugging
-    });
+    res.status(500).json({ success: false, message: "Failed to create payment order" });
   }
 };
 
