@@ -140,6 +140,7 @@ exports.adminCreateGalleryProduct = async (req, res) => {
     const {
       name, sku, category, origin, condition, description,
       images, imageUrl, costPrice, mrp, stockQty, featured, certificate,
+      tag,
     } = req.body;
 
     if (!name || !name.trim()) {
@@ -156,6 +157,7 @@ exports.adminCreateGalleryProduct = async (req, res) => {
       mrp: Number(mrp) || 0,
       stockQty: Number(stockQty) || 0,
       inStock: Number(stockQty) > 0,
+      tag: tag || "",
       featured: !!featured,
       certificate: !!certificate,
     });
@@ -179,7 +181,7 @@ exports.adminUpdateGalleryProduct = async (req, res) => {
     const allowed = [
       "name", "sku", "category", "origin", "condition", "description",
       "images", "imageUrl", "costPrice", "mrp", "stockQty", "inStock",
-      "featured", "certificate", "isActive",
+      "featured", "certificate", "isActive", "tag",
     ];
     const updates = {};
     allowed.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });

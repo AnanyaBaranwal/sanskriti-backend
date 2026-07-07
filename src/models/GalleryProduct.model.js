@@ -39,6 +39,10 @@ const galleryProductSchema = new mongoose.Schema(
     inStock: { type: Boolean, default: true },
     totalOrdered: { type: Number, default: 0 }, // cumulative units ordered by sellers
 
+    // Free-text ribbon badge admin can set, e.g. "Bestseller", "New Launch",
+    // "Popular", "Heritage" — purely a merchandising label, no fixed list.
+    tag: { type: String, trim: true, default: "" },
+
     featured: { type: Boolean, default: false },
     certificate: { type: Boolean, default: false },
 
