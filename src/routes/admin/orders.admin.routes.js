@@ -47,11 +47,14 @@ const orderHash = (phone, items, date) => {
 // ── Helper: flag product-cost refund as pending admin approval ──
 // Only flags — never touches the wallet. Wallet is credited only via
 // PATCH /api/admin/refunds/:id/approve.
+// CHANGED: refunds the GALLERY COST that was actually debited (order.costTotal)
+// instead of the retail subtotal — falls back to subtotal for old/manual
+// orders that have no costTotal (pre-Gallery orders, bulk uploads, etc.).
 const flagRefundPending = (order) => {
   if (!order.walletDeducted || order.walletRefunded || order.refundStatus === "PENDING") return null;
   order.refundStatus         = "PENDING";
-  order.refundEligibleAmount = order.subtotal;
-  return `Refund of ₹${order.subtotal.toLocaleString("en-IN")} (product cost) flagged — pending admin approval`;
+  order.refundEligibleAmount = order.costTotal > 0 ? order.costTotal : order.subtotal;
+  return `Refund of ₹${order.refundEligibleAmount.toLocaleString("en-IN")} (gallery cost) flagged — pending admin approval`;
 };
 
 // ── GET /api/admin/orders ─────────────────────────────────────
@@ -59,13 +62,14 @@ const flagRefundPending = (order) => {
 router.get("/", async (req, res) => {
   try {
     const {
-      status, search, from, to, clientId,
+      status, search, from, to, clientId, platform, // NEW: platform filter
       page = 1, limit = 20,
     } = req.query;
 
     const filter = {};
     if (status)   filter.status = status.toUpperCase();
     if (clientId) filter.clientId = clientId;
+    if (platform) filter.platform = platform; // NEW
     if (from || to) {
       filter.createdAt = {};
       if (from) filter.createdAt.$gte = new Date(from);
@@ -76,6 +80,7 @@ router.get("/", async (req, res) => {
         { orderNumber:   { $regex: search, $options: "i" } },
         { "buyer.name":  { $regex: search, $options: "i" } },
         { "buyer.phone": { $regex: search, $options: "i" } },
+        { platformOrderId: { $regex: search, $options: "i" } }, // NEW
       ];
     }
 
@@ -101,12 +106,115 @@ router.get("/", async (req, res) => {
   }
 });
 
+// ── PATCH /api/admin/orders/:id ───────────────────────────────
+// Full admin edit — unlike the seller's own PATCH /api/orders/:id, this
+// works on ANY order regardless of status (admin needs to be able to fix
+// a typo'd phone number or shipping address on a SHIPPED order, etc).
+//
+// Guard: once the wallet has already been debited for this order
+// (walletDeducted === true), editing `items` (and therefore subtotal/
+// tax/total/costTotal) is blocked — changing the cost basis after money
+// has already moved would silently desync the wallet transaction from
+// the order. Buyer info, platform, platformOrderId, and notes can still
+// be edited freely at any time.
+router.patch("/:id", async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+
+    const before = order.toObject();
+
+    // ── Always-editable fields, regardless of order status ─────────────
+    const alwaysEditable = ["buyer", "platform", "platformOrderId", "notes", "paymentMethod", "paymentStatus"];
+    alwaysEditable.forEach(f => {
+      if (req.body[f] !== undefined) order[f] = req.body[f];
+    });
+
+    // ── Items / cost-affecting fields — blocked after wallet debit ──────
+    const wantsToEditItems = req.body.items !== undefined
+      || req.body.taxPercent !== undefined
+      || req.body.discountAmount !== undefined;
+
+    if (wantsToEditItems) {
+      if (order.walletDeducted) {
+        return res.status(400).json({
+          success: false,
+          message: "This order's wallet debit has already been processed — items/pricing can no longer be edited. You can still edit buyer info, platform, and notes.",
+        });
+      }
+
+      if (req.body.items !== undefined) {
+        // Re-derive totals exactly like createOrder does, preserving any
+        // existing galleryProductId/costPrice snapshots per line item where
+        // the admin didn't explicitly change them.
+        const items = req.body.items.map((item, idx) => {
+          const existing = order.items[idx];
+          const quantity = Number(item.quantity) || 1;
+          const price = Number(item.price) || 0;
+          return {
+            name: item.name ?? existing?.name,
+            description: item.description ?? existing?.description ?? "",
+            quantity,
+            price,
+            total: price * quantity,
+            galleryProductId: item.galleryProductId ?? existing?.galleryProductId ?? null,
+            costPrice: item.costPrice ?? existing?.costPrice ?? 0,
+          };
+        });
+        order.items = items;
+      }
+
+      const taxPercent = req.body.taxPercent ?? 0;
+      const discount = req.body.discountAmount ?? order.discountAmount ?? 0;
+      const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+      const taxAmount = Math.round((subtotal * taxPercent) / 100);
+      const costTotal = order.items.reduce((sum, i) => sum + (i.costPrice || 0) * i.quantity, 0);
+
+      order.subtotal = subtotal;
+      order.taxAmount = taxAmount;
+      order.discountAmount = discount;
+      order.total = subtotal + taxAmount - discount;
+      order.costTotal = costTotal;
+    }
+
+    order.statusHistory.push({
+      status: order.status,
+      note: "Order details edited by admin",
+      changedAt: new Date(),
+    });
+
+    await order.save();
+
+    if (order.clientId) await refreshClientStats(order.clientId);
+
+    await logAction(req, {
+      action: "UPDATE",
+      entity: "Order",
+      entityId: order._id,
+      entityRef: order.orderNumber,
+      description: `Admin edited order ${order.orderNumber}`,
+      before,
+      after: order.toObject(),
+    });
+
+    res.json({ success: true, message: "Order updated", order });
+  } catch (err) {
+    console.error("[admin edit order]", err);
+    res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+});
+
 // ── POST /api/admin/orders/bulk-upload ────────────────────────
 // Excel columns expected (row 1 = header, row 2+ = data):
 // buyer_name | buyer_phone | buyer_email | city | state | pincode |
 // item1_name | item1_qty | item1_price |
 // item2_name | item2_qty | item2_price |  (optional — up to 5 items)
 // tax_percent | discount | payment_method | notes
+//
+// NOTE: bulk-uploaded orders are NOT gallery-sourced (no galleryProductId /
+// costPrice per item), so their costTotal stays 0 and CONFIRMED will fall
+// back to debiting the full retail `total`, exactly as before. Left
+// unchanged intentionally.
 router.post("/bulk-upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: "Excel file is required" });
@@ -286,8 +394,13 @@ router.patch("/bulk-status", async (req, res) => {
 
 // ── PATCH /api/admin/orders/:id/status ───────────────────────
 // Single order status update (admin can update any seller's order).
-// CONFIRMED (first time) → debits full order.total from the seller's wallet.
-// CANCELLED → flags the product-cost (subtotal) as pending refund approval;
+// CONFIRMED (first time) → debits the seller's wallet.
+//   CHANGED: debits order.costTotal (pure Gallery cost — no margin,
+//   packaging, shipping, or GST) instead of the full retail order.total.
+//   Falls back to order.total for old/manual/bulk-upload orders that have
+//   no costTotal (i.e. weren't sourced from the Gallery), so nothing about
+//   your existing non-Gallery flow changes.
+// CANCELLED → flags the gallery cost as pending refund approval;
 // nothing is credited until admin approves via PATCH /api/admin/refunds/:id/approve.
 router.patch("/:id/status", async (req, res) => {
   const session = await mongoose.startSession();
@@ -312,17 +425,21 @@ router.patch("/:id/status", async (req, res) => {
     const before = order.status;
     let walletMessage = null;
 
-    // ── Deduct full order total from seller wallet the first time it's CONFIRMED ──
+    // ── Deduct from seller wallet the first time it's CONFIRMED ──
     if (newStatus === "CONFIRMED" && !order.walletDeducted) {
       const wallet = await Wallet.findOne({ sellerId: order.sellerId }).session(session);
       const currentBalance = wallet?.balance || 0;
-      const amount = order.total;
+
+      // CHANGED: use the Gallery cost total, not the retail total, when this
+      // order was sourced from the Gallery (costTotal > 0).
+      const amount = order.costTotal > 0 ? order.costTotal : order.total;
+      const isGallerySourced = order.costTotal > 0;
 
       if (currentBalance < amount) {
         await session.abortTransaction();
         return res.status(400).json({
           success: false,
-          message: `Cannot confirm order — seller wallet balance (₹${currentBalance.toLocaleString("en-IN")}) is less than the order amount (₹${amount.toLocaleString("en-IN")}). Ask the seller to add funds first.`,
+          message: `Cannot confirm order — seller wallet balance (₹${currentBalance.toLocaleString("en-IN")}) is less than the ${isGallerySourced ? "gallery cost" : "order"} amount (₹${amount.toLocaleString("en-IN")}). Ask the seller to add funds first.`,
         });
       }
 
@@ -342,16 +459,20 @@ router.patch("/:id/status", async (req, res) => {
         amount,
         balanceBefore,
         balanceAfter,
-        description:   `Order ${order.orderNumber} confirmed by admin`,
+        description:   isGallerySourced
+          ? `Order ${order.orderNumber} confirmed by admin — gallery cost price debited`
+          : `Order ${order.orderNumber} confirmed by admin`,
         reference:     `ORDER-${order.orderNumber}`,
-        category:      "ORDER_PAYMENT",
+        category:      isGallerySourced ? "GALLERY_ORDER" : "ORDER_PAYMENT",
         status:        "COMPLETED",
         metadata:      { orderId: order._id },
       }], { session });
 
       order.walletDeducted       = true;
       order.walletDeductedAmount = amount;
-      walletMessage = `₹${amount.toLocaleString("en-IN")} deducted from seller wallet`;
+      walletMessage = isGallerySourced
+        ? `₹${amount.toLocaleString("en-IN")} (gallery cost) deducted from seller wallet`
+        : `₹${amount.toLocaleString("en-IN")} deducted from seller wallet`;
     }
 
     // ── Flag product-cost refund as pending admin approval on cancellation ──
@@ -387,8 +508,8 @@ router.patch("/:id/status", async (req, res) => {
 });
 
 // ── PATCH /api/admin/orders/:id/return ───────────────────────
-// Mark order as RETURNED with reason. Flags the product-cost (subtotal)
-// as pending seller-wallet refund — admin must approve via PATCH /api/admin/refunds/:id/approve.
+// Mark order as RETURNED with reason. Flags the gallery cost as pending
+// seller-wallet refund — admin must approve via PATCH /api/admin/refunds/:id/approve.
 router.patch("/:id/return", async (req, res) => {
   try {
     const { reason, refundAmount } = req.body;

@@ -19,6 +19,8 @@ const customerRoutes     = require("./routes/customer.routes");
 const analyticsRoutes    = require("./routes/analytics.routes");
 const notificationRoutes = require("./routes/notification.routes");
 const categoriesRoutes   = require("./routes/categories.routes");
+const galleryRoutes            = require("./routes/gallery.routes");
+
 
 // ── Admin routes ──────────────────────────────────────────────
 const adminClientRoutes    = require("./routes/admin/clients.admin.routes");
@@ -37,6 +39,7 @@ const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
 const adminCategoriesRoutes  = require("./routes/admin/categories.admin.routes");
 const adminClientsImportRoutes = require("./routes/admin/clients.import.routes");
 const adminBillRoutes = require("./routes/admin/bills.admin.routes");
+const adminGalleryRoutes        = require("./routes/admin/gallery.admin.routes");
 const app = express();
 
 // ── Connect DB + start scheduler ─────────────────────────────
@@ -120,6 +123,8 @@ app.use("/api/customers",     customerRoutes);
 app.use("/api/analytics",     analyticsRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/categories",    categoriesRoutes);
+app.use("/api/gallery",  galleryRoutes);
+
 
 // ── Admin routes ──────────────────────────────────────────────
 app.use("/api/admin/clients",    adminClientRoutes);
@@ -140,6 +145,7 @@ app.use("/api/admin/reorder",       adminReorderRoutes);
 app.use("/api/admin/categories",    adminCategoriesRoutes);
 app.use("/api/admin/clients", adminClientsImportRoutes);
 app.use("/api/admin/bills", adminBillRoutes);
+app.use("/api/admin/gallery",        adminGalleryRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {

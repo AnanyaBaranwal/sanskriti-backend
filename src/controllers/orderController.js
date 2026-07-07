@@ -1,5 +1,8 @@
 const Order = require("../models/Order.model");
 const mongoose = require("mongoose");
+const GalleryProduct = require("../models/GalleryProduct.model"); // NEW
+const Wallet = require("../models/Wallet.model"); // NEW — for the informational balance check
+const { findOrCreateClient, refreshClientStats } = require("../utils/clientStats");
 
 // ── Helper: calculate totals ──────────────────────────────────
 const calculateTotals = (items, taxPercent = 0, discount = 0) => {
@@ -11,35 +14,81 @@ const calculateTotals = (items, taxPercent = 0, discount = 0) => {
 };
 
 // ── POST /api/orders ──────────────────────────────────────────
+// Every order is now sourced from the Gallery catalog: the seller already
+// received this sale on some marketplace and is buying stock from
+// Sanskriti at pure cost price to fulfil it.
+//
+// Body: {
+//   buyer: { name, phone, email, address:{street,city,state,pincode} },
+//   items: [{ galleryProductId, quantity, price }],   // price = seller's OWN selling price per unit
+//   platform, platformOrderId,
+//   taxPercent, discountAmount, paymentMethod, notes
+// }
 exports.createOrder = async (req, res) => {
   try {
-    const { buyer, items, taxPercent, discountAmount, paymentMethod, notes } = req.body;
+    const { buyer, items, platform, platformOrderId, taxPercent, discountAmount, paymentMethod, notes } = req.body;
 
     if (!buyer?.name || !buyer?.phone) {
       return res.status(400).json({ success: false, message: "Buyer name and phone are required" });
     }
+    if (!buyer?.address?.street || !buyer?.address?.city || !buyer?.address?.state || !buyer?.address?.pincode) {
+      return res.status(400).json({ success: false, message: "Complete shipping address is required" });
+    }
     if (!items || items.length === 0) {
       return res.status(400).json({ success: false, message: "At least one item is required" });
     }
-
-    // Validate items
+    if (!platform) {
+      return res.status(400).json({ success: false, message: "Please select which platform this order came from" });
+    }
     for (const item of items) {
-      if (!item.name || !item.price || !item.quantity) {
-        return res.status(400).json({ success: false, message: "Each item needs name, price and quantity" });
+      if (!item.galleryProductId || !item.quantity || item.price === undefined || item.price === null) {
+        return res.status(400).json({ success: false, message: "Each item needs a gallery product, quantity, and your selling price" });
       }
     }
 
-    // Add total to each item
-    const processedItems = items.map((item) => ({
-      ...item,
-      total: item.price * item.quantity,
-    }));
+    // ── Pull live gallery products (never trust client-sent cost data) ──
+    const galleryProductIds = items.map(i => i.galleryProductId);
+    const galleryProducts = await GalleryProduct.find({ _id: { $in: galleryProductIds }, isActive: true });
+
+    if (galleryProducts.length !== new Set(galleryProductIds.map(String)).size) {
+      return res.status(400).json({ success: false, message: "One or more products are no longer available in the gallery" });
+    }
+
+    let processedItems;
+    try {
+      processedItems = items.map(reqItem => {
+        const gp = galleryProducts.find(p => String(p._id) === String(reqItem.galleryProductId));
+        if (gp.inStock === false) {
+          throw new Error(`"${gp.name}" is currently out of stock`);
+        }
+        const quantity = Math.max(1, Number(reqItem.quantity) || 1);
+        const price = Number(reqItem.price); // seller's own selling price per unit
+        return {
+          name: gp.name,
+          description: gp.description || "",
+          quantity,
+          price,
+          total: price * quantity,
+          galleryProductId: gp._id,
+          costPrice: gp.costPrice,
+        };
+      });
+    } catch (stockErr) {
+      return res.status(400).json({ success: false, message: stockErr.message });
+    }
 
     const { subtotal, taxAmount, discountAmount: discount, total } = calculateTotals(
       processedItems,
       taxPercent || 0,
       discountAmount || 0
     );
+
+    const costTotal = processedItems.reduce((sum, i) => sum + i.costPrice * i.quantity, 0);
+
+    // Informational balance check — the AUTHORITATIVE check happens again
+    // when admin confirms the order (in orders.admin.routes.js).
+    const wallet = await Wallet.findOne({ sellerId: req.seller.id });
+    const insufficientBalance = !wallet || wallet.balance < costTotal;
 
     const order = await Order.create({
       sellerId: req.seller.id,
@@ -49,19 +98,32 @@ exports.createOrder = async (req, res) => {
       taxAmount,
       discountAmount: discount,
       total,
+      costTotal,
+      platform,
+      platformOrderId: platformOrderId || "",
       paymentMethod: paymentMethod || "OTHER",
       notes: notes || "",
-      statusHistory: [{ status: "PENDING", note: "Order created" }],
+      statusHistory: [{ status: "PENDING", note: "Order created — pending admin confirmation before gallery stock is charged" }],
     });
+
+    // Link to client (unchanged from before)
+    const clientId = await findOrCreateClient({ sellerId: req.seller.id, buyer: order.buyer });
+    if (clientId) {
+      await Order.findByIdAndUpdate(order._id, { clientId });
+      await refreshClientStats(clientId);
+    }
 
     res.status(201).json({
       success: true,
-      message: "Order created successfully",
+      message: insufficientBalance
+        ? `Order created — pending admin confirmation. Note: your wallet balance (₹${wallet?.balance || 0}) is currently below the cost total (₹${costTotal}); please top up before admin confirms it.`
+        : "Order created successfully",
+      insufficientBalance,
       order,
     });
   } catch (error) {
     console.error("Create order error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(400).json({ success: false, message: error.message || "Server error" });
   }
 };
 

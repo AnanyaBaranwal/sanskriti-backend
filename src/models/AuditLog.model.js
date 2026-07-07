@@ -21,7 +21,8 @@ const auditLogSchema = new mongoose.Schema(
     // What entity was affected
     entity: {
       type: String,
-      enum: ["Order", "Bill", "Client", "Product", "Seller", "Payout", "Wallet", "System"],
+      // NOTE: "GalleryProduct" and "GalleryOrder" added for the seller Gallery feature.
+      enum: ["Order", "Bill", "Client", "Product", "Seller", "Payout", "Wallet", "GalleryProduct", "GalleryOrder", "System"],
       required: true,
     },
     entityId: {

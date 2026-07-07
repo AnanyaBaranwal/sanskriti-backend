@@ -2,36 +2,16 @@ const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
-    // NEW — whose wallet this transaction belongs to
-    walletOwnerType: {
-      type: String,
-      enum: ["SELLER", "CLIENT"],
-      required: true,
-      default: "SELLER",
-    },
-
     walletId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Wallet",
-      required: function () {
-        return this.walletOwnerType === "SELLER";
-      },
+      required: true,
     },
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
-      required: function () {
-        return this.walletOwnerType === "SELLER";
-      },
+      required: true,
     },
-
-    // NEW — set for CLIENT transactions (refunds credited to client wallet)
-    clientId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
-      default: null,
-    },
-
     type: {
       type: String,
       enum: ["CREDIT", "DEBIT"],
@@ -57,11 +37,13 @@ const transactionSchema = new mongoose.Schema(
     },
     reference: {
       type: String,
-      trim: true, // payment gateway reference ID, or REFUND-<returnId>
+      trim: true, // payment gateway reference ID
     },
     category: {
       type: String,
-      enum: ["TOPUP", "ORDER_PAYMENT", "PAYOUT", "REFUND", "COMMISSION", "OTHER"],
+      // NOTE: "GALLERY_ORDER" added — used when wallet is debited for an
+      // approved GalleryOrder (seller buying from the Sanskriti Gallery).
+      enum: ["TOPUP", "ORDER_PAYMENT", "PAYOUT", "REFUND", "COMMISSION", "GALLERY_ORDER", "OTHER"],
       default: "OTHER",
     },
     status: {
@@ -70,7 +52,7 @@ const transactionSchema = new mongoose.Schema(
       default: "COMPLETED",
     },
     metadata: {
-      type: mongoose.Schema.Types.Mixed, // extra info like orderId, returnId, gstExcluded etc
+      type: mongoose.Schema.Types.Mixed, // extra info like orderId, paymentId etc
       default: {},
     },
   },
@@ -80,8 +62,5 @@ const transactionSchema = new mongoose.Schema(
 // Index for fast queries
 transactionSchema.index({ sellerId: 1, createdAt: -1 });
 transactionSchema.index({ walletId: 1, createdAt: -1 });
-transactionSchema.index({ clientId: 1, createdAt: -1 });
-transactionSchema.index({ "metadata.orderId": 1 });
-transactionSchema.index({ "metadata.returnId": 1 });
 
 module.exports = mongoose.model("Transaction", transactionSchema);
