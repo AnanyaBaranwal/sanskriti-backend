@@ -36,6 +36,7 @@ const adminBulkInvoiceRoutes = require("./routes/admin/bulk_invoice.admin.routes
 const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
 const adminCategoriesRoutes  = require("./routes/admin/categories.admin.routes");
 const adminClientsImportRoutes = require("./routes/admin/clients.import.routes");
+const adminBillRoutes = require("./routes/admin/bills.admin.routes");
 
 const app = express();
 
@@ -139,6 +140,7 @@ app.use("/api/admin/bulk-invoice",  adminBulkInvoiceRoutes);
 app.use("/api/admin/reorder",       adminReorderRoutes);
 app.use("/api/admin/categories",    adminCategoriesRoutes);
 app.use("/api/admin/clients", adminClientsImportRoutes);
+app.use("/api/admin/bills", adminBillRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
