@@ -5,7 +5,7 @@ const auditLogSchema = new mongoose.Schema(
     // Who did it
     performedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      ref: "Client",
       required: true,
     },
     performedByName: { type: String },   // snapshot so it survives account deletion

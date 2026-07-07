@@ -19,7 +19,7 @@ const returnSchema = new mongoose.Schema(
 
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      ref: "Client",
       required: true,
     },
 

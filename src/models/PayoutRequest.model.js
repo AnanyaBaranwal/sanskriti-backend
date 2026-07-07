@@ -14,7 +14,7 @@ const payoutRequestSchema = new mongoose.Schema(
     // Required only for SELLER_PAYOUT
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      ref: "Client",
       required: function () {
         return this.type === "SELLER_PAYOUT";
       },

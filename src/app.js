@@ -37,7 +37,6 @@ const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
 const adminCategoriesRoutes  = require("./routes/admin/categories.admin.routes");
 const adminClientsImportRoutes = require("./routes/admin/clients.import.routes");
 const adminBillRoutes = require("./routes/admin/bills.admin.routes");
-
 const app = express();
 
 // ── Connect DB + start scheduler ─────────────────────────────

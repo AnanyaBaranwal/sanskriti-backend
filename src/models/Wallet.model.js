@@ -4,7 +4,7 @@ const walletSchema = new mongoose.Schema(
   {
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      ref: "Client",
       required: true,
       unique: true, // one wallet per seller
     },

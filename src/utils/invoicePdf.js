@@ -16,7 +16,7 @@ exports.ensureBillsDir = () => {
 
 exports.generateInvoicePDF = async (bill) => {
   const doc = await PDFDocument.create();
-  const page = doc.addPage([595, 842]); // A4
+  const page = doc.addPage([595, 842]);
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold    = await doc.embedFont(StandardFonts.HelveticaBold);
   const W = 595;
@@ -25,13 +25,11 @@ exports.generateInvoicePDF = async (bill) => {
   const text = (t, x, y, opts = {}) =>
     page.drawText(String(t ?? ""), { x, y, size: opts.size || 9, font: opts.bold ? bold : regular, color: opts.color || DARK });
 
-  // Header — brand + title
   text("Sanskriti", W/2 - 30, Y, { size: 16, bold: true, color: GOLD });
   Y -= 34;
   text("INVOICE", W/2 - 40, Y, { size: 22, bold: true });
   Y -= 26;
 
-  // Invoice number / date row
   page.drawRectangle({ x: 30, y: Y-30, width: W-60, height: 34, color: LIGHT });
   text("INVOICE NUMBER", 40, Y-10, { size: 7.5, color: GRAY });
   text(bill.invoiceNumber, 40, Y-22, { size: 11, bold: true });
@@ -39,7 +37,6 @@ exports.generateInvoicePDF = async (bill) => {
   text(new Date(bill.invoiceDate || bill.createdAt).toLocaleDateString("en-GB"), W-160, Y-22, { size: 11, bold: true });
   Y -= 48;
 
-  // BILL TO
   text("BILL TO", 30, Y, { size: 11, bold: true });
   Y -= 10;
   page.drawLine({ start: {x:30,y:Y}, end:{x:W-30,y:Y}, thickness: 1, color: DARK });
@@ -61,7 +58,6 @@ exports.generateInvoicePDF = async (bill) => {
   text(bill.buyer?.address || "", 30, Y-13, { size: 9.5 });
   Y -= 40;
 
-  // PRODUCT DETAILS
   text("PRODUCT DETAILS", 30, Y, { size: 11, bold: true });
   Y -= 18;
   page.drawRectangle({ x:30, y:Y-16, width:W-60, height:18, color: LIGHT });
@@ -101,13 +97,11 @@ exports.generateInvoicePDF = async (bill) => {
   summaryRow("TOTAL PAYABLE:", `₹${bill.grandTotal.toFixed(2)} ${bill.currency}`, true);
   Y -= 14;
 
-  // Payment mode band
   page.drawRectangle({ x:30, y:Y-32, width:W-60, height:34, color: DARK });
   text("PAYMENT MODE", W/2-40, Y-10, { size: 7.5, color: GOLD });
   text(bill.paymentMode || "—", W/2-45, Y-24, { size: 11, bold: true, color: rgb(1,1,1) });
   Y -= 56;
 
-  // Footer — terms + company details
   page.drawLine({ start:{x:30,y:Y}, end:{x:W-30,y:Y}, thickness:0.5, color: LINE });
   Y -= 16;
   text("Terms & Conditions", 30, Y, { size: 9.5, bold: true });

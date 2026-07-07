@@ -11,8 +11,6 @@ const { logAction } = require("../../utils/audit");
 router.use(protect, restrictTo("admin"));
 
 // ── GET /api/admin/clients ────────────────────────────────────
-// List all clients with search + filter, plus summary stats for
-// the header cards (Total / Active / With GST).
 router.get("/", async (req, res) => {
   try {
     const {
@@ -61,22 +59,20 @@ router.get("/", async (req, res) => {
 });
 
 // ── POST /api/admin/clients ───────────────────────────────────
-// Manually add a new client (User Management "+ Add Client" button)
 router.post("/", async (req, res) => {
   try {
-    const { name, phone, email, company, gstNumber, address, walletBalance, status, role } = req.body;
+    const { name, phone, email, company, gstNumber, address, walletBalance, status, clientType } = req.body;
 
     if (!name?.trim() || !phone?.trim()) {
       return res.status(400).json({ success: false, message: "Name and phone are required" });
     }
 
-    const exists = await Client.findOne({ sellerId: req.seller.id, phone: phone.trim() });
+    const exists = await Client.findOne({ phone: phone.trim() });
     if (exists) {
       return res.status(409).json({ success: false, message: "A client with this phone number already exists" });
     }
 
     const client = await Client.create({
-      sellerId: req.seller.id,
       name:  name.trim(),
       phone: phone.trim(),
       email: email?.trim() || null,
@@ -85,7 +81,7 @@ router.post("/", async (req, res) => {
       address: address || {},
       walletBalance: Number(walletBalance) || 0,
       status: ["active", "inactive"].includes(status) ? status : "active",
-      role:   ["customer", "wholesale", "vip"].includes(role) ? role : "customer",
+      clientType: ["customer", "wholesale", "vip"].includes(clientType) ? clientType : "customer",
     });
 
     await logAction(req, {
@@ -104,13 +100,11 @@ router.post("/", async (req, res) => {
 });
 
 // ── GET /api/admin/clients/:id ────────────────────────────────
-// Full client dashboard
 router.get("/:id", async (req, res) => {
   try {
     const client = await Client.findById(req.params.id).lean({ virtuals: true });
     if (!client) return res.status(404).json({ success: false, message: "Client not found" });
 
-    // Recent 10 orders
     const recentOrders = await Order.find({ clientId: req.params.id })
       .sort({ createdAt: -1 })
       .limit(10)
@@ -125,7 +119,6 @@ router.get("/:id", async (req, res) => {
 });
 
 // ── POST /api/admin/clients/:id/notes ─────────────────────────
-// Add an internal note to a client
 router.post("/:id/notes", async (req, res) => {
   try {
     const { text } = req.body;
@@ -180,7 +173,6 @@ router.delete("/:id/notes/:noteId", async (req, res) => {
 });
 
 // ── GET /api/admin/clients/:id/activity ──────────────────────
-// Client activity history = all their orders as a timeline
 router.get("/:id/activity", async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -206,11 +198,9 @@ router.get("/:id/activity", async (req, res) => {
 });
 
 // ── PATCH /api/admin/clients/:id ──────────────────────────────
-// Update client info — now includes company, GST, wallet balance,
-// status, and role so the drawer can fully edit a client record.
 router.patch("/:id", async (req, res) => {
   try {
-    const allowed = ["name", "email", "address", "company", "gstNumber", "walletBalance", "status", "role"];
+    const allowed = ["name", "email", "address", "company", "gstNumber", "walletBalance", "status", "clientType"];
     const updates = {};
     allowed.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
 
@@ -235,7 +225,6 @@ router.patch("/:id", async (req, res) => {
 });
 
 // ── DELETE /api/admin/clients/:id ─────────────────────────────
-// Remove a client record entirely (does not touch past orders)
 router.delete("/:id", async (req, res) => {
   try {
     const client = await Client.findByIdAndDelete(req.params.id);

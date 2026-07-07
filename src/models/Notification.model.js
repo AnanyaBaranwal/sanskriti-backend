@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const notificationSchema = new mongoose.Schema(
   {
-    sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "Seller", required: true, index: true },
+    sellerId: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true, index: true },
     icon:  { type: String, default: "🔔" },
     title: { type: String, required: true, trim: true },
     desc:  { type: String, default: "", trim: true },

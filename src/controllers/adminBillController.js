@@ -2,26 +2,22 @@ const fs      = require("fs");
 const path    = require("path");
 const ExcelJS = require("exceljs");
 const Bill    = require("../models/Bill.model");
-const Seller  = require("../models/Seller.model");
+const Client  = require("../models/Client.model");
 const { generateInvoicePDF, ensureBillsDir } = require("../utils/invoicePdf");
 const { logAction } = require("../utils/audit");
 
-// ── GET /api/admin/bills/sellers ── Company dropdown ───────────
 exports.listSellers = async (req, res) => {
   try {
-    const sellers = await Seller.find({ role: { $ne: "admin" } })
-      .select("name businessName email phone gstNumber address")
-      .sort({ businessName: 1, name: 1 })
+    const clients = await Client.find({ role: "seller" })
+      .select("name company email phone gstNumber address sellerId")
+      .sort({ company: 1, name: 1 })
       .lean();
-    res.json({ success: true, sellers });
+    res.json({ success: true, sellers: clients });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ── POST /api/admin/bills/generate ──────────────────────────────
-// Body: { sellerId, product, sku, quantity, price, shippingCharge,
-//         packagingCharge, taxPercent, paymentMode, transactionId?, invoiceNumber?, date? }
 exports.createManualBill = async (req, res) => {
   try {
     const {
@@ -35,7 +31,7 @@ exports.createManualBill = async (req, res) => {
       return res.status(400).json({ success:false, message:"Company, Product and Price are required" });
     }
 
-    const seller = await Seller.findById(sellerId);
+    const seller = await Client.findById(sellerId);
     if (!seller) return res.status(404).json({ success:false, message:"Company not found" });
 
     if (transactionId) {
@@ -59,11 +55,11 @@ exports.createManualBill = async (req, res) => {
 
     const bill = new Bill({
       sellerId,
-      transactionId: transactionId || undefined, // auto if blank
-      invoiceNumber: invoiceNumber || undefined,  // auto if blank
+      transactionId: transactionId || undefined,
+      invoiceNumber: invoiceNumber || undefined,
       invoiceDate: date ? new Date(date) : new Date(),
       buyer: {
-        name:      seller.businessName || seller.name,
+        name:      seller.company || seller.name,
         email:     seller.email,
         phone:     seller.phone,
         gstNumber: seller.gstNumber,
@@ -86,7 +82,6 @@ exports.createManualBill = async (req, res) => {
 
     await bill.save();
 
-    // Generate + store the PDF immediately so it's ready the instant the seller checks
     const pdfBytes = await generateInvoicePDF(bill);
     const billsDir = ensureBillsDir();
     const filename = `${bill.invoiceNumber}.pdf`;
@@ -109,7 +104,6 @@ exports.createManualBill = async (req, res) => {
   }
 };
 
-// ── GET /api/admin/bills ─────────────────────────────────────────
 exports.getAllBills = async (req, res) => {
   try {
     const { sellerId, page = 1, limit = 20, search = "" } = req.query;
@@ -123,16 +117,18 @@ exports.getAllBills = async (req, res) => {
         { "buyer.name":   { $regex: search, $options: "i" } },
       ];
     }
-    const [bills, total, recentCount, monthCount] = await Promise.all([
+    const [bills, total] = await Promise.all([
       Bill.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(Number(limit)),
       Bill.countDocuments(filter),
-      Bill.countDocuments({ ...filter, createdAt: { $gte: new Date(new Date().setHours(0,0,0,0)) } }),
-      Bill.countDocuments({ ...filter, createdAt: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } }),
     ]);
     res.json({
       success: true,
       bills,
-      stats: { total: await Bill.countDocuments({}), today: recentCount, thisMonth: monthCount },
+      stats: {
+        total: await Bill.countDocuments({}),
+        today: await Bill.countDocuments({ createdAt: { $gte: new Date(new Date().setHours(0,0,0,0)) } }),
+        thisMonth: await Bill.countDocuments({ createdAt: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } }),
+      },
       pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total/limit) },
     });
   } catch (err) {
@@ -140,7 +136,6 @@ exports.getAllBills = async (req, res) => {
   }
 };
 
-// ── GET /api/admin/bills/:id ──────────────────────────────────────
 exports.getBillByIdAdmin = async (req, res) => {
   try {
     const bill = await Bill.findById(req.params.id);
@@ -151,7 +146,6 @@ exports.getBillByIdAdmin = async (req, res) => {
   }
 };
 
-// ── PATCH /api/admin/bills/:id/payment ────────────────────────────
 exports.updatePaymentStatusAdmin = async (req, res) => {
   try {
     const { paymentStatus } = req.body;
@@ -166,7 +160,6 @@ exports.updatePaymentStatusAdmin = async (req, res) => {
   }
 };
 
-// ── DELETE /api/admin/bills/:id ────────────────────────────────────
 exports.deleteBill = async (req, res) => {
   try {
     const bill = await Bill.findByIdAndDelete(req.params.id);
@@ -182,7 +175,6 @@ exports.deleteBill = async (req, res) => {
   }
 };
 
-// ── GET /api/admin/bills/export?format=csv|xlsx&sellerId=&from=&to= ──
 exports.exportBills = async (req, res) => {
   try {
     const { format = "xlsx", sellerId, from, to } = req.query;

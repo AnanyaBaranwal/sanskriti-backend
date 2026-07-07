@@ -19,7 +19,7 @@ const transactionSchema = new mongoose.Schema(
     },
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      ref: "Client",
       required: function () {
         return this.walletOwnerType === "SELLER";
       },

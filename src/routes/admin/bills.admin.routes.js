@@ -16,7 +16,7 @@ router.use(protect, restrictTo("admin"));
 router.get("/sellers",       listSellers);
 router.get("/export",        exportBills);
 router.post("/generate",     createManualBill);
-router.get("/",               getAllBills);
+router.get("/",              getAllBills);
 router.get("/:id",           getBillByIdAdmin);
 router.patch("/:id/payment", updatePaymentStatusAdmin);
 router.delete("/:id",        deleteBill);
