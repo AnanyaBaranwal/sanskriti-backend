@@ -71,29 +71,7 @@ const sellerSchema = new mongoose.Schema(
       state: String,
       pincode: String,
     },
-    kyc: {
-      panNumber: {
-        type: String,
-        uppercase: true,
-        trim: true,
-      },
-      panDocument: String,
-      aadharNumber: String,
-      aadharDocument: String,
-      bankAccountNumber: String,
-      bankIFSC: {
-        type: String,
-        uppercase: true,
-        trim: true,
-      },
-      bankAccountName: String,
-      cancelledCheque: String,
-      submittedAt: Date,
-      // ── Admin review audit trail ──
-      adminNote: String,
-      reviewedAt: Date,
-      reviewedBy: String, // admin name at time of decision
-    },
+  
     profilePhoto: String,
   },
   {

@@ -5,7 +5,7 @@
 const express  = require("express");
 const router   = express.Router();
 const bcrypt   = require("bcryptjs");
-const Seller   = require("../../models/kyc.model");
+const Seller   = require("../../models/Seller.model");
 const { logAction } = require("../../utils/audit");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 
