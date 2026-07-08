@@ -12,6 +12,10 @@ const {
 } = require("../controllers/authController");
 const { protect } = require("../middleware/auth.middleware");
 
+const { adminLogin } = require("../controllers/adminAuthController"); // ← ADD
+
+router.post("/admin-login", adminLogin); // ← ADD, alongside your existing router.post("/login", login);
+
 // ── Public routes (no token needed) ──────────────────────────
 router.post("/register", register);
 router.post("/login", login);
