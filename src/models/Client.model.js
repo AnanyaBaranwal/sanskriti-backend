@@ -25,7 +25,9 @@ const clientSchema = new mongoose.Schema(
     phone: { type: String, required: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
 
-    // Auth role — separate from clientType (business tier) below
+    // Single role field covers BOTH staff/login roles (seller, admin,
+    // manager, employee) AND buyer business tiers (customer, wholesale,
+    // vip) — this collection holds both kinds of documents together.
     role: {
       type: String,
       enum: ["seller", "admin", "manager", "employee"],
@@ -62,13 +64,6 @@ const clientSchema = new mongoose.Schema(
       city:    String,
       state:   String,
       pincode: String,
-    },
-
-    // ── Business tier (renamed from old "role") ──────────────────
-    clientType: {
-      type: String,
-      enum: ["customer", "wholesale", "vip"],
-      default: "customer",
     },
 
     // ── KYC status snapshot (full docs live in Kyc model) ────────
@@ -133,4 +128,8 @@ clientSchema.set("toObject", { virtuals: true });
 clientSchema.index({ phone: 1 });
 clientSchema.index({ name: "text", phone: "text", email: "text", company: "text" });
 
-module.exports = mongoose.model("Client", clientSchema);
+// Explicit collection name — this model now reads/writes the "sellers"
+// collection (which holds both real seller/staff accounts AND buyer
+// records together). Route-level filters (role $nin/$in STAFF_ROLES)
+// are what keep the two kinds of documents separated in the admin UI.
+module.exports = mongoose.model("Client", clientSchema, "sellers");
