@@ -39,5 +39,4 @@ const kycSchema = new mongoose.Schema(
 
 kycSchema.index({ status: 1 });
 
-// Explicit collection name: "kyc" (own collection, separate from "sellers")
-module.exports = mongoose.model("Kyc", kycSchema, "kyc");
+module.exports = mongoose.models.Kyc || mongoose.model("Kyc", kycSchema, "kyc");

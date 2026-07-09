@@ -14,6 +14,65 @@ router.use(protect, restrictTo("admin"));
 const VALID_KYC_STATUSES = ["not_submitted", "under_review", "approved", "rejected"];
 const KYC_DOC_FIELDS = ["panDocument", "aadharDocument", "cancelledCheque"];
 
+// POST /api/admin/sellers — admin manually creates a new seller account
+router.post("/", async (req, res) => {
+  try {
+    const { name, email, phone, password, businessName, gstNumber } = req.body;
+
+    if (!name || !email || !phone) {
+      return res.status(400).json({ success: false, message: "Name, email and phone are required" });
+    }
+
+    const exists = await Seller.findOne({ email: email.toLowerCase() });
+    if (exists) {
+      return res.status(409).json({ success: false, message: "A seller with this email already exists" });
+    }
+
+    // If no password given, generate one so the admin can hand it to the seller.
+    // Seller.model.js's pre-save hook hashes passwordHash automatically — pass
+    // the plain value here, do NOT hash it manually or it'll be double-hashed.
+    const generatedPassword = !password;
+    const tempPassword = password || Math.random().toString(36).slice(-10);
+
+    const seller = await Seller.create({
+      name,
+      email: email.toLowerCase(),
+      phone,
+      passwordHash: tempPassword,
+      role: "seller",
+      status: "active", // manually added sellers are active immediately
+      businessName: businessName || "",
+      gstNumber: gstNumber || "",
+    });
+
+    await logAction(req, {
+      action: "CREATE",
+      entity: "Seller",
+      entityId: seller._id,
+      entityRef: seller.name,
+      description: `Admin created seller account for ${seller.name} (${seller.email})`,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Seller created successfully",
+      seller: { ...seller.toObject(), kycStatus: "not_submitted", kyc: null },
+      // Only sent back when we generated it ourselves, so the admin can share
+      // it with the seller. Never returned if the admin set their own password.
+      tempPassword: generatedPassword ? tempPassword : undefined,
+    });
+  } catch (err) {
+    console.error("[admin/sellers create]", err);
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ success: false, message: Object.values(err.errors).map(e => e.message).join(", ") });
+    }
+    if (err.code === 11000) {
+      return res.status(409).json({ success: false, message: "A seller with this email already exists" });
+    }
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // GET /api/admin/sellers  (URL kept as-is — frontend already calls this)
 router.get("/", async (req, res) => {
   try {
