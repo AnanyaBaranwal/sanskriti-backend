@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const Client = require("../models/Client.model");
+const Seller = require("../models/Seller.model");
 const { sendVerificationEmail } = require("../services/email.service");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -17,11 +17,11 @@ const generateRefreshToken = (id) => {
   });
 };
 
-const sendTokenResponse = async (client, statusCode, res) => {
-  const accessToken = generateAccessToken(client._id, client.role);
-  const refreshToken = generateRefreshToken(client._id);
+const sendTokenResponse = async (seller, statusCode, res) => {
+  const accessToken = generateAccessToken(seller._id, seller.role);
+  const refreshToken = generateRefreshToken(seller._id);
 
-  await Client.findByIdAndUpdate(client._id, { refreshToken });
+  await Seller.findByIdAndUpdate(seller._id, { refreshToken });
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
@@ -33,7 +33,7 @@ const sendTokenResponse = async (client, statusCode, res) => {
   res.status(statusCode).json({
     success: true,
     accessToken,
-    seller: client, // keep response key "seller" so frontend doesn't need changes
+    seller,
   });
 };
 
@@ -58,7 +58,7 @@ exports.register = async (req, res) => {
       });
     }
 
-    const existing = await Client.findOne({ email: email.toLowerCase() });
+    const existing = await Seller.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(409).json({
         success: false,
@@ -69,7 +69,7 @@ exports.register = async (req, res) => {
     const emailVerifyToken = crypto.randomBytes(32).toString("hex");
     const emailVerifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    const client = await Client.create({
+    const seller = await Seller.create({
       name,
       email,
       phone,
@@ -79,12 +79,12 @@ exports.register = async (req, res) => {
     });
 
     try {
-      await sendVerificationEmail(client.email, client.name, emailVerifyToken);
+      await sendVerificationEmail(seller.email, seller.name, emailVerifyToken);
     } catch (emailErr) {
       console.error("Verification email failed:", emailErr.message);
     }
 
-    sendTokenResponse(client, 201, res);
+    sendTokenResponse(seller, 201, res);
   } catch (error) {
     console.error("Register error:", error);
     res.status(500).json({ success: false, message: "Server error during registration" });
@@ -103,27 +103,27 @@ exports.login = async (req, res) => {
       });
     }
 
-    const client = await Client.findOne({ email: email.toLowerCase() }).select(
+    const seller = await Seller.findOne({ email: email.toLowerCase() }).select(
       "+passwordHash +refreshToken"
     );
 
-    if (!client) {
+    if (!seller) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    const isMatch = await client.comparePassword(password);
+    const isMatch = await seller.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    if (client.status === "suspended") {
+    if (seller.status === "suspended") {
       return res.status(403).json({
         success: false,
         message: "Your account has been suspended. Contact support.",
       });
     }
 
-    sendTokenResponse(client, 200, res);
+    sendTokenResponse(seller, 200, res);
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ success: false, message: "Server error during login" });
@@ -133,7 +133,7 @@ exports.login = async (req, res) => {
 // POST /api/auth/logout
 exports.logout = async (req, res) => {
   try {
-    await Client.findByIdAndUpdate(req.seller.id, { refreshToken: "" });
+    await Seller.findByIdAndUpdate(req.seller.id, { refreshToken: "" });
 
     res.clearCookie("refreshToken", {
       httpOnly: true,
@@ -147,14 +147,14 @@ exports.logout = async (req, res) => {
   }
 };
 
-// GET /api/auth/me — get current logged-in client
+// GET /api/auth/me — get current logged-in seller
 exports.getMe = async (req, res) => {
   try {
-    const client = await Client.findById(req.seller.id);
-    if (!client) {
+    const seller = await Seller.findById(req.seller.id);
+    if (!seller) {
       return res.status(404).json({ success: false, message: "Account not found" });
     }
-    res.status(200).json({ success: true, seller: client });
+    res.status(200).json({ success: true, seller });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }
@@ -163,23 +163,23 @@ exports.getMe = async (req, res) => {
 // GET /api/auth/verify-email/:token
 exports.verifyEmail = async (req, res) => {
   try {
-    const client = await Client.findOne({
+    const seller = await Seller.findOne({
       emailVerifyToken: req.params.token,
       emailVerifyExpires: { $gt: Date.now() },
     });
 
-    if (!client) {
+    if (!seller) {
       return res.status(400).json({
         success: false,
         message: "Invalid or expired verification token",
       });
     }
 
-    client.isEmailVerified = true;
-    client.emailVerifyToken = undefined;
-    client.emailVerifyExpires = undefined;
-    client.status = "active";
-    await client.save({ validateBeforeSave: false });
+    seller.isEmailVerified = true;
+    seller.emailVerifyToken = undefined;
+    seller.emailVerifyExpires = undefined;
+    seller.status = "active";
+    await seller.save({ validateBeforeSave: false });
 
     res.status(200).json({ success: true, message: "Email verified successfully" });
   } catch (error) {
@@ -216,16 +216,16 @@ exports.refreshToken = async (req, res) => {
       });
     }
 
-    const client = await Client.findById(decoded.id).select("+refreshToken");
+    const seller = await Seller.findById(decoded.id).select("+refreshToken");
 
-    if (!client) {
+    if (!seller) {
       return res.status(401).json({
         success: false,
         message: "Account not found. Please login again.",
       });
     }
 
-    if (client.refreshToken !== token) {
+    if (seller.refreshToken !== token) {
       return res.status(401).json({
         success: false,
         message: "Invalid refresh token. Please login again.",
@@ -233,11 +233,11 @@ exports.refreshToken = async (req, res) => {
       });
     }
 
-    const newAccessToken = generateAccessToken(client._id, client.role);
+    const newAccessToken = generateAccessToken(seller._id, seller.role);
 
-    const newRefreshToken = generateRefreshToken(client._id);
-    client.refreshToken = newRefreshToken;
-    await client.save({ validateBeforeSave: false });
+    const newRefreshToken = generateRefreshToken(seller._id);
+    seller.refreshToken = newRefreshToken;
+    await seller.save({ validateBeforeSave: false });
 
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
@@ -268,9 +268,9 @@ exports.forgotPassword = async (req, res) => {
       });
     }
 
-    const client = await Client.findOne({ email: email.toLowerCase() });
+    const seller = await Seller.findOne({ email: email.toLowerCase() });
 
-    if (!client) {
+    if (!seller) {
       return res.status(200).json({
         success: true,
         message: "If that email exists, a reset link has been sent.",
@@ -283,26 +283,26 @@ exports.forgotPassword = async (req, res) => {
       .update(resetToken)
       .digest("hex");
 
-    client.passwordResetToken = hashedToken;
-    client.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
-    await client.save({ validateBeforeSave: false });
+    seller.passwordResetToken = hashedToken;
+    seller.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await seller.save({ validateBeforeSave: false });
 
     const resetURL = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password/${resetToken}`;
 
     try {
-      console.log("Sending reset email to:", client.email);
+      console.log("Sending reset email to:", seller.email);
       console.log("Reset URL:", resetURL);
       await require("../services/email.service").sendPasswordResetEmail(
-        client.email,
-        client.name,
+        seller.email,
+        seller.name,
         resetURL
       );
       console.log("Email sent successfully!");
     } catch (emailErr) {
       console.log("Email error:", emailErr.message);
-      client.passwordResetToken = undefined;
-      client.passwordResetExpires = undefined;
-      await client.save({ validateBeforeSave: false });
+      seller.passwordResetToken = undefined;
+      seller.passwordResetExpires = undefined;
+      await seller.save({ validateBeforeSave: false });
 
       return res.status(500).json({
         success: false,
@@ -337,23 +337,23 @@ exports.resetPassword = async (req, res) => {
       .update(req.params.token)
       .digest("hex");
 
-    const client = await Client.findOne({
+    const seller = await Seller.findOne({
       passwordResetToken: hashedToken,
       passwordResetExpires: { $gt: Date.now() },
     }).select("+passwordResetToken +passwordResetExpires");
 
-    if (!client) {
+    if (!seller) {
       return res.status(400).json({
         success: false,
         message: "Reset token is invalid or has expired (10 min limit)",
       });
     }
 
-    client.passwordHash = password;
-    client.passwordResetToken = undefined;
-    client.passwordResetExpires = undefined;
-    client.refreshToken = undefined;
-    await client.save();
+    seller.passwordHash = password;
+    seller.passwordResetToken = undefined;
+    seller.passwordResetExpires = undefined;
+    seller.refreshToken = undefined;
+    await seller.save();
 
     res.status(200).json({
       success: true,

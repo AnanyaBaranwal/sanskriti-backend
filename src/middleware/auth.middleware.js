@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const Client = require("../models/Client.model");
+const Seller = require("../models/Seller.model");
 
 exports.protect = async (req, res, next) => {
   try {
@@ -12,15 +12,15 @@ exports.protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const client = await Client.findById(decoded.id);
-    if (!client) {
+    const seller = await Seller.findById(decoded.id);
+    if (!seller) {
       return res.status(401).json({ success: false, message: "Token is valid but account no longer exists" });
     }
-    if (client.status === "suspended") {
+    if (seller.status === "suspended") {
       return res.status(403).json({ success: false, message: "Your account has been suspended" });
     }
 
-    req.seller = { id: client._id, role: client.role, email: client.email };
+    req.seller = { id: seller._id, role: seller.role, email: seller.email, name: seller.name };
     next();
   } catch (error) {
     if (error.name === "TokenExpiredError") {

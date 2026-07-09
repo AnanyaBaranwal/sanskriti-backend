@@ -1,6 +1,6 @@
 // src/controllers/adminAuthController.js
 const jwt = require("jsonwebtoken");
-const Client = require("../models/Client.model");
+const Seller = require("../models/Seller.model");
 
 const ADMIN_ROLES = ["admin", "manager", "employee"]; // staff roles allowed into the Admin Panel
 
@@ -16,8 +16,8 @@ const generateRefreshToken = (id) =>
 
 // ── POST /api/auth/admin-login ────────────────────────────────
 // Same credential check as the regular seller login, PLUS a role gate.
-// A seller-role account gets a clean 403 here and NEVER receives a token
-// for the admin panel — this is what was missing before.
+// A seller-role account gets a clean 403 here and never receives a token
+// for the admin panel.
 exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -26,7 +26,7 @@ exports.adminLogin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Email and password are required" });
     }
 
-    const account = await Client.findOne({ email: email.toLowerCase() }).select(
+    const account = await Seller.findOne({ email: email.toLowerCase() }).select(
       "+passwordHash +refreshToken"
     );
 
@@ -43,7 +43,7 @@ exports.adminLogin = async (req, res) => {
       return res.status(403).json({ success: false, message: "Your account has been suspended. Contact support." });
     }
 
-    // ── The actual fix — reject anything that isn't staff ─────────────
+    // ── Reject anything that isn't staff ─────────────
     if (!ADMIN_ROLES.includes(account.role)) {
       return res.status(403).json({
         success: false,
@@ -54,7 +54,7 @@ exports.adminLogin = async (req, res) => {
     const accessToken = generateAccessToken(account._id, account.role);
     const refreshToken = generateRefreshToken(account._id);
 
-    await Client.findByIdAndUpdate(account._id, { refreshToken });
+    await Seller.findByIdAndUpdate(account._id, { refreshToken });
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -66,7 +66,7 @@ exports.adminLogin = async (req, res) => {
     res.status(200).json({
       success: true,
       accessToken,
-      seller: account, // kept as `seller` to match your existing frontend's expected response shape
+      seller: account,
     });
   } catch (error) {
     console.error("Admin login error:", error);
