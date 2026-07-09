@@ -39,6 +39,7 @@ const adminReorderRoutes     = require("./routes/admin/reorder.admin.routes");
 const adminCategoriesRoutes  = require("./routes/admin/categories.admin.routes");
 const adminBillRoutes = require("./routes/admin/bills.admin.routes");
 const adminGalleryRoutes        = require("./routes/admin/gallery.admin.routes");
+const adminKycRoutes = require("./routes/admin/kyc.admin.routes");
 const app = express();
 
 // ── Connect DB + start scheduler ─────────────────────────────
@@ -144,6 +145,7 @@ app.use("/api/admin/reorder",       adminReorderRoutes);
 app.use("/api/admin/categories",    adminCategoriesRoutes);
 app.use("/api/admin/bills", adminBillRoutes);
 app.use("/api/admin/gallery",        adminGalleryRoutes);
+app.use("/api/admin/sellers", adminKycRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {

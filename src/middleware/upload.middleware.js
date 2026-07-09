@@ -23,7 +23,7 @@ if (!fs.existsSync(categoryDir)) {
   fs.mkdirSync(categoryDir, { recursive: true });
 }
 
-// Storage config for KYC documents
+// Storage config for KYC documents — seller's own upload (kyc/upload, protect middleware sets req.seller)
 const kycStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, "uploads/kyc/");
@@ -32,6 +32,21 @@ const kycStorage = multer.diskStorage({
     // Format: sellerID_fieldname_timestamp.ext
     const ext = path.extname(file.originalname);
     const filename = `${req.seller.id}_${file.fieldname}_${Date.now()}${ext}`;
+    cb(null, filename);
+  },
+});
+
+// Storage config for KYC documents uploaded BY AN ADMIN on behalf of a seller.
+// Filenames use req.params.id (the target seller), not req.seller.id (the
+// logged-in admin) — otherwise every admin-uploaded file would be misnamed
+// with the admin's own account id.
+const kycAdminStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/kyc/");
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const filename = `${req.params.id}_${file.fieldname}_${Date.now()}${ext}`;
     cb(null, filename);
   },
 });
@@ -75,9 +90,20 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// KYC upload — accepts multiple fields
+// KYC upload (seller's own) — accepts multiple fields
 exports.uploadKYC = multer({
   storage: kycStorage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+}).fields([
+  { name: "panDocument", maxCount: 1 },
+  { name: "aadharDocument", maxCount: 1 },
+  { name: "cancelledCheque", maxCount: 1 },
+]);
+
+// KYC upload performed BY AN ADMIN on behalf of a seller
+exports.uploadKYCAdmin = multer({
+  storage: kycAdminStorage,
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
 }).fields([

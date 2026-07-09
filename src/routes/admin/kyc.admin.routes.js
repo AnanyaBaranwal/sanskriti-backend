@@ -1,14 +1,18 @@
 const express  = require("express");
 const router   = express.Router();
+const fs       = require("fs");
+const path     = require("path");
 
-const Seller = require("../../models/Seller.model"); // renamed from kyc.model.js
+const Seller = require("../../models/Seller.model");
 const Kyc    = require("../../models/Kyc.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
+const { uploadKYCAdmin } = require("../../middleware/upload.middleware");
 
 router.use(protect, restrictTo("admin"));
 
 const VALID_KYC_STATUSES = ["not_submitted", "under_review", "approved", "rejected"];
+const KYC_DOC_FIELDS = ["panDocument", "aadharDocument", "cancelledCheque"];
 
 // GET /api/admin/sellers  (URL kept as-is — frontend already calls this)
 router.get("/", async (req, res) => {
@@ -108,7 +112,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// PATCH /api/admin/sellers/:id/kyc
+// PATCH /api/admin/sellers/:id/kyc — approve / reject
 router.patch("/:id/kyc", async (req, res) => {
   try {
     const { status, note } = req.body;
@@ -136,12 +140,13 @@ router.patch("/:id/kyc", async (req, res) => {
     kyc.reviewedBy = req.seller?.name || "Admin";
     await kyc.save();
 
-    // Keep the cached status on Seller in sync
-    seller.kycStatus = status;
+    // NOTE: Seller.kycStatus is intentionally NOT written here — KYC status
+    // lives only in the Kyc collection. Only the account-activation flag on
+    // Seller is touched, since that's account state, not KYC data.
     if (status === "approved" && seller.status === "pending") {
       seller.status = "active";
+      await seller.save();
     }
-    await seller.save();
 
     await logAction(req, {
       action:      "STATUS_CHANGE",
@@ -160,6 +165,94 @@ router.patch("/:id/kyc", async (req, res) => {
     });
   } catch (err) {
     console.error("[admin/sellers kyc update]", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// POST /api/admin/sellers/:id/kyc/upload — admin uploads/replaces documents for a seller
+router.post("/:id/kyc/upload", uploadKYCAdmin, async (req, res) => {
+  try {
+    const seller = await Seller.findById(req.params.id);
+    if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
+
+    const { panNumber, aadharNumber, bankAccountNumber, bankIFSC, bankAccountName } = req.body;
+
+    let kyc = await Kyc.findOne({ sellerId: req.params.id });
+    if (!kyc) kyc = new Kyc({ sellerId: req.params.id });
+
+    if (panNumber)         kyc.panNumber         = panNumber.toUpperCase();
+    if (aadharNumber)      kyc.aadharNumber       = aadharNumber;
+    if (bankAccountNumber) kyc.bankAccountNumber  = bankAccountNumber;
+    if (bankIFSC)          kyc.bankIFSC           = bankIFSC.toUpperCase();
+    if (bankAccountName)   kyc.bankAccountName    = bankAccountName;
+
+    if (req.files) {
+      if (req.files.panDocument)     kyc.panDocument     = req.files.panDocument[0].path;
+      if (req.files.aadharDocument)  kyc.aadharDocument  = req.files.aadharDocument[0].path;
+      if (req.files.cancelledCheque) kyc.cancelledCheque = req.files.cancelledCheque[0].path;
+    }
+
+    // Documents changed by an admin — surface for review instead of leaving
+    // a stale not_submitted/rejected status in place.
+    if (["not_submitted", "rejected"].includes(kyc.status)) {
+      kyc.status = "under_review";
+      kyc.submittedAt = new Date();
+    }
+    await kyc.save();
+
+    await logAction(req, {
+      action:      "UPDATE",
+      entity:      "Kyc",
+      entityId:    kyc._id,
+      entityRef:   seller.name,
+      description: `Admin uploaded/updated KYC documents for ${seller.name}`,
+    });
+
+    res.json({
+      success: true,
+      message: "KYC documents updated",
+      seller: { ...seller.toObject(), kycStatus: kyc.status, kyc },
+    });
+  } catch (err) {
+    console.error("[admin/sellers kyc upload]", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// DELETE /api/admin/sellers/:id/kyc/document/:docType
+router.delete("/:id/kyc/document/:docType", async (req, res) => {
+  try {
+    const { docType } = req.params;
+    if (!KYC_DOC_FIELDS.includes(docType)) {
+      return res.status(400).json({ success: false, message: `Invalid document type. Valid: ${KYC_DOC_FIELDS.join(", ")}` });
+    }
+
+    const kyc = await Kyc.findOne({ sellerId: req.params.id });
+    if (!kyc || !kyc[docType]) {
+      return res.status(400).json({ success: false, message: "No document to remove" });
+    }
+
+    // Best-effort file deletion — don't fail the request if the file is already gone
+    try {
+      const absolute = path.resolve(kyc[docType]);
+      if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
+    } catch (fileErr) {
+      console.warn("[admin/sellers kyc document delete] file removal failed:", fileErr.message);
+    }
+
+    kyc[docType] = undefined;
+    await kyc.save();
+
+    await logAction(req, {
+      action:      "UPDATE",
+      entity:      "Kyc",
+      entityId:    kyc._id,
+      description: `Admin removed ${docType} for seller ${req.params.id}`,
+    });
+
+    res.json({ success: true, message: "Document removed", kyc });
+  } catch (err) {
+    console.error("[admin/sellers kyc document delete]", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

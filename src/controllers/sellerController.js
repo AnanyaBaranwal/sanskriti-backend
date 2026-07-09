@@ -1,5 +1,5 @@
-const Seller = require("../models/Seller.model"); // renamed from kyc.model.js — see rename instructions
-const Kyc    = require("../models/Kyc.model");
+const Seller = require("../models/kyc.model");
+const Kyc = require("../models/Kyc.model");
 const bcrypt = require("bcryptjs");
 
 // ─── GET /api/seller/profile ──────────────────────────────────────────────────
@@ -37,6 +37,7 @@ exports.updateProfile = async (req, res) => {
       }
     });
 
+    // If profile photo was uploaded via multer
     if (req.file) {
       updates.profilePhoto = req.file.path;
     }
@@ -64,7 +65,9 @@ exports.updateProfile = async (req, res) => {
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,
-        message: Object.values(error.errors).map((e) => e.message).join(", "),
+        message: Object.values(error.errors)
+          .map((e) => e.message)
+          .join(", "),
       });
     }
     res.status(500).json({ success: false, message: "Server error" });
@@ -108,7 +111,7 @@ exports.updateBusiness = async (req, res) => {
 };
 
 // ─── GET /api/seller/kyc ──────────────────────────────────────────────────────
-// Now reads from the separate Kyc collection, not a nested field on Seller.
+// Reads from the standalone Kyc collection — nothing here touches Seller.
 exports.getKYC = async (req, res) => {
   try {
     const kyc = await Kyc.findOne({ sellerId: req.seller.id });
@@ -125,7 +128,7 @@ exports.getKYC = async (req, res) => {
 };
 
 // ─── POST /api/seller/kyc/upload ──────────────────────────────────────────────
-// Upserts into the separate Kyc collection.
+// Writes only to the standalone Kyc collection — nothing here touches Seller.
 exports.uploadKYC = async (req, res) => {
   try {
     const {
@@ -136,30 +139,32 @@ exports.uploadKYC = async (req, res) => {
       bankAccountName,
     } = req.body;
 
-    const update = { status: "under_review", submittedAt: new Date() };
+    const update = { $set: { submittedAt: new Date(), status: "under_review" } };
 
-    if (panNumber) update.panNumber = panNumber.toUpperCase();
-    if (aadharNumber) update.aadharNumber = aadharNumber;
-    if (bankAccountNumber) update.bankAccountNumber = bankAccountNumber;
-    if (bankIFSC) update.bankIFSC = bankIFSC.toUpperCase();
-    if (bankAccountName) update.bankAccountName = bankAccountName;
+    if (panNumber) update.$set.panNumber = panNumber.toUpperCase();
+    if (aadharNumber) update.$set.aadharNumber = aadharNumber;
+    if (bankAccountNumber) update.$set.bankAccountNumber = bankAccountNumber;
+    if (bankIFSC) update.$set.bankIFSC = bankIFSC.toUpperCase();
+    if (bankAccountName) update.$set.bankAccountName = bankAccountName;
 
+    // Add file paths if documents were uploaded
     if (req.files) {
-      if (req.files.panDocument)     update.panDocument     = req.files.panDocument[0].path;
-      if (req.files.aadharDocument)  update.aadharDocument  = req.files.aadharDocument[0].path;
-      if (req.files.cancelledCheque) update.cancelledCheque = req.files.cancelledCheque[0].path;
+      if (req.files.panDocument) {
+        update.$set.panDocument = req.files.panDocument[0].path;
+      }
+      if (req.files.aadharDocument) {
+        update.$set.aadharDocument = req.files.aadharDocument[0].path;
+      }
+      if (req.files.cancelledCheque) {
+        update.$set.cancelledCheque = req.files.cancelledCheque[0].path;
+      }
     }
 
     const kyc = await Kyc.findOneAndUpdate(
       { sellerId: req.seller.id },
-      { $set: update, $setOnInsert: { sellerId: req.seller.id } },
-      { new: true, upsert: true, runValidators: true }
+      { $setOnInsert: { sellerId: req.seller.id }, ...update },
+      { upsert: true, new: true }
     );
-
-    // Keep a cached status on the Seller doc too, so admin lists / dashboards
-    // that only fetch Seller (not Kyc) can still show a quick badge without
-    // an extra query. Kyc collection remains the source of truth.
-    await Seller.findByIdAndUpdate(req.seller.id, { kycStatus: "under_review" });
 
     res.status(200).json({
       success: true,
@@ -192,6 +197,7 @@ exports.changePassword = async (req, res) => {
       });
     }
 
+    // Fetch seller with password
     const seller = await Seller.findById(req.seller.id).select("+passwordHash");
 
     const isMatch = await seller.comparePassword(currentPassword);
@@ -202,8 +208,9 @@ exports.changePassword = async (req, res) => {
       });
     }
 
+    // Update password — pre-save hook will hash it
     seller.passwordHash = newPassword;
-    seller.refreshToken = undefined;
+    seller.refreshToken = undefined; // logout all devices
     await seller.save();
 
     res.status(200).json({
