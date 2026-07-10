@@ -351,4 +351,45 @@ router.patch("/:id/status", async (req, res) => {
   }
 });
 
+// PATCH /api/admin/sellers/:id/reset-password
+// Admin resets a seller's password. If no password is supplied, one is
+// generated and returned so the admin can share it with the seller.
+// Sets seller.passwordHash to plain text and calls .save() — Seller.model.js's
+// pre-save hook hashes it automatically. Never hash it manually here.
+router.patch("/:id/reset-password", async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    const seller = await Seller.findById(req.params.id);
+    if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
+
+    if (password && password.length < 8) {
+      return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
+    }
+
+    const generatedPassword = !password;
+    const newPassword = password || Math.random().toString(36).slice(-10);
+
+    seller.passwordHash = newPassword; // pre-save hook hashes this
+    seller.refreshToken = undefined;   // force logout on all devices
+    await seller.save();
+
+    await logAction(req, {
+      action: "UPDATE",
+      entity: "Seller",
+      entityId: seller._id,
+      entityRef: seller.name,
+      description: `Admin reset password for ${seller.name} (${seller.email})`,
+    });
+
+    res.json({
+      success: true,
+      message: "Password reset successfully",
+      tempPassword: generatedPassword ? newPassword : undefined,
+    });
+  } catch (err) {
+    console.error("[admin/sellers reset-password]", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 module.exports = router;
