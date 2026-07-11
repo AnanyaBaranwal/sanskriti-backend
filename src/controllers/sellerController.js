@@ -1,5 +1,5 @@
 const Seller = require("../models/kyc.model");
-const Kyc = require("../models/Kyc.model");
+const Kyc = require("../models/kyc.model");
 const bcrypt = require("bcryptjs");
 
 // ─── GET /api/seller/profile ──────────────────────────────────────────────────
