@@ -2,7 +2,7 @@ const express  = require("express");
 const router   = express.Router();
 const mongoose = require("mongoose");
 const Order    = require("../models/Order.model");
-const Client   = require("../models/Client.model");
+const Seller   = require("../models/Seller.model");
 const { protect } = require("../middleware/auth.middleware");
 
 router.use(protect);
@@ -49,8 +49,8 @@ router.get("/overview", async (req, res) => {
         { $limit: 5 },
       ]),
 
-      // Top 5 customers by revenue — reuses cached Client stats
-      Client.find({ sellerId }).sort({ totalRevenue: -1 }).limit(5).select("name phone totalOrders totalRevenue"),
+      // Top 5 customers by revenue — reuses cached Seller stats
+      Seller.find({ sellerId }).sort({ totalRevenue: -1 }).limit(5).select("name phone totalOrders totalRevenue"),
     ]);
 
     // Fill in months with no orders so the chart has no gaps

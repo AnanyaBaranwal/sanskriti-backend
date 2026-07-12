@@ -48,13 +48,13 @@ const orderSchema = new mongoose.Schema(
   {
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
+      ref: "Seller",
       default: null, // NOT required — legacy orders have none
     },
 
     clientId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
+      ref: "Seller",
       default: null,
     },
 

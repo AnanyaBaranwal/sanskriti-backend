@@ -4,7 +4,7 @@ const ExcelJS  = require("exceljs");
 
 const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
-const Client  = require("../../models/Client.model");
+const Seller  = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
@@ -199,9 +199,9 @@ router.get("/bills", async (req, res) => {
 router.get("/clients", async (req, res) => {
   try {
     const { format = "xlsx" } = req.query;
-    const clients = await Client.find({}).sort({ totalRevenue: -1 }).lean({ virtuals: true });
+    const clients = await Seller.find({}).sort({ totalRevenue: -1 }).lean({ virtuals: true });
 
-    await logAction(req, { action: "EXPORT", entity: "Client", description: `Exported ${clients.length} clients` });
+    await logAction(req, { action: "EXPORT", entity: "Seller", description: `Exported ${clients.length} clients` });
 
     if (format === "csv") {
       const headers = ["Name","Phone","Email","City","State","Total Orders","Total Revenue","Pending Payments","Return %","Last Order"];

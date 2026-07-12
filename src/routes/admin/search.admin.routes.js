@@ -3,7 +3,7 @@ const router  = express.Router();
 
 const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
-const Client  = require("../../models/Client.model");
+const Seller  = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 
@@ -58,7 +58,7 @@ router.get("/", async (req, res) => {
         .lean(),
 
       // Clients — search by name, phone, email
-      Client.find({
+      Seller.find({
         $or: [
           { name:  regex },
           { phone: regex },
@@ -141,8 +141,8 @@ router.get("/clients", async (req, res) => {
     const filter = { $or: [{ name: regex }, { phone: regex }, { email: regex }] };
 
     const [clients, total] = await Promise.all([
-      Client.find(filter).sort({ totalRevenue: -1 }).skip((page-1)*limit).limit(Number(limit)).lean({ virtuals: true }),
-      Client.countDocuments(filter),
+      Seller.find(filter).sort({ totalRevenue: -1 }).skip((page-1)*limit).limit(Number(limit)).lean({ virtuals: true }),
+      Seller.countDocuments(filter),
     ]);
 
     res.json({ success: true, total, clients });

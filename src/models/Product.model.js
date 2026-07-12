@@ -6,7 +6,7 @@ const movementSchema = new mongoose.Schema(
     quantity:  { type: Number, required: true },           // positive = in, negative = out
     reason:    { type: String, trim: true },               // "Sale", "Purchase", "Damaged", etc.
     orderId:   { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null },
-    recordedBy:{ type: mongoose.Schema.Types.ObjectId, ref: "Client" },
+    recordedBy:{ type: mongoose.Schema.Types.ObjectId, ref: "Seller" },
     stockAfter:{ type: Number },                           // stock level after this movement
   },
   { timestamps: true }
@@ -16,7 +16,7 @@ const productSchema = new mongoose.Schema(
   {
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
+      ref: "Seller",
       required: true,
     },
 

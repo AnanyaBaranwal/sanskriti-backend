@@ -4,7 +4,7 @@ const Anthropic  = require("@anthropic-ai/sdk");
 
 const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
-const Client  = require("../../models/Client.model");
+const Seller  = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 
@@ -137,7 +137,7 @@ User query: "${query}"`,
     }
 
     const { collection, filter = {}, sort = null, limit = 20, explanation } = parsed;
-    const validCollections = { orders: Order, bills: Bill, clients: Client, products: Product };
+    const validCollections = { orders: Order, bills: Bill, clients: Seller, products: Product };
 
     if (!validCollections[collection]) {
       return res.status(422).json({ success: false, message: `Unknown collection: ${collection}` });

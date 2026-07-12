@@ -13,13 +13,13 @@ const returnSchema = new mongoose.Schema(
     // This is what lets /refund credit the correct client's wallet.
     clientId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
-      default: null, // null only for legacy orders that predate the Client model
+      ref: "Seller",
+      default: null, // null only for legacy orders that predate the Seller model
     },
 
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
+      ref: "Seller",
       required: true,
     },
 

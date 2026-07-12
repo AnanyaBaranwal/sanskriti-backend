@@ -1,4 +1,4 @@
-const Client = require("../models/Client.model");
+const Seller = require("../models/Seller.model");
 const Order  = require("../models/Order.model");
 
 /**
@@ -25,7 +25,7 @@ const refreshClientStats = async (clientId) => {
       .filter(o => o.paymentStatus === "UNPAID")
       .reduce((sum, o) => sum + (o.total || 0), 0);
 
-    await Client.findByIdAndUpdate(clientId, {
+    await Seller.findByIdAndUpdate(clientId, {
       totalOrders,
       totalRevenue,
       returnedOrders,
@@ -38,13 +38,13 @@ const refreshClientStats = async (clientId) => {
 };
 
 /**
- * Find or create a Client from an order's buyer data.
+ * Find or create a Seller from an order's buyer data.
  * Returns the client._id to store on the order.
  */
 const findOrCreateClient = async ({ sellerId, buyer }) => {
   if (!buyer?.phone) return null;
   try {
-    const client = await Client.findOneAndUpdate(
+    const client = await Seller.findOneAndUpdate(
       { sellerId, phone: buyer.phone },
       {
         $setOnInsert: {

@@ -5,7 +5,7 @@ const auditLogSchema = new mongoose.Schema(
     // Who did it
     performedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
+      ref: "Seller",
       required: true,
     },
     performedByName: { type: String },   // snapshot so it survives account deletion
@@ -22,7 +22,7 @@ const auditLogSchema = new mongoose.Schema(
     entity: {
       type: String,
       // NOTE: "GalleryProduct" and "GalleryOrder" added for the seller Gallery feature.
-      enum: ["Order", "Bill", "Client", "Product", "Seller", "Payout", "Wallet", "GalleryProduct", "GalleryOrder", "System"],
+      enum: ["Order", "Bill", "Seller", "Product", "Seller", "Payout", "Wallet", "GalleryProduct", "GalleryOrder", "System"],
       required: true,
     },
     entityId: {

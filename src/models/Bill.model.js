@@ -12,7 +12,7 @@ const billSchema = new mongoose.Schema(
   {
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
+      ref: "Seller",
       required: true,
     },
     orderId: {

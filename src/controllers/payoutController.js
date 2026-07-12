@@ -3,7 +3,7 @@ const PayoutRequest = require("../models/PayoutRequest.model");
 const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
 //const Seller = require("../models/Seller.model");
-const Client = require("../models/Client.model");
+const Seller = require("../models/Seller.model");
 const Order = require("../models/Order.model");
 
 // ─── POST /api/payouts/request ─────────────────────────────────────────────────
@@ -182,7 +182,7 @@ exports.adminGetAllPayouts = async (req, res) => {
 
 // ─── ADMIN: PATCH /api/payouts/admin/:id/approve ───────────────────────────────
 // Branches by payout.type:
-//   CLIENT_REFUND  -> credits the client's wallet (Client.walletBalance)
+//   CLIENT_REFUND  -> credits the client's wallet (Seller.walletBalance)
 //   SELLER_PAYOUT  -> debits the seller's wallet (existing bank-payout flow)
 exports.adminApprovePayout = async (req, res) => {
   const session = await mongoose.startSession();
@@ -210,16 +210,16 @@ exports.adminApprovePayout = async (req, res) => {
     // BRANCH 1 — CLIENT_REFUND: credit client wallet, no bank transfer
     // ══════════════════════════════════════════════════════════════════
     if (payout.type === "CLIENT_REFUND") {
-      const client = await Client.findById(payout.clientId).session(session);
+      const client = await Seller.findById(payout.clientId).session(session);
       if (!client) {
         await session.abortTransaction();
-        return res.status(404).json({ success: false, message: "Client not found" });
+        return res.status(404).json({ success: false, message: "Seller not found" });
       }
 
       const balanceBefore = client.walletBalance;
       const balanceAfter = balanceBefore + payout.amount;
 
-      await Client.findByIdAndUpdate(
+      await Seller.findByIdAndUpdate(
         payout.clientId,
         { $inc: { walletBalance: payout.amount, totalRefunded: payout.amount } },
         { session }

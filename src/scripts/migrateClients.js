@@ -4,10 +4,10 @@ const bcrypt = require("bcryptjs");
 
 (async () => {
   await mongoose.connect(process.env.MONGO_URI);
-  const Client = require("../src/models/Client.model");
+  const Seller = require("../src/models/Seller.model");
 
-  const clients = await Client.find({ passwordHash: { $exists: false } });
-  let i = await Client.countDocuments({ sellerId: { $exists: true } });
+  const clients = await Seller.find({ passwordHash: { $exists: false } });
+  let i = await Seller.countDocuments({ sellerId: { $exists: true } });
 
   for (const c of clients) {
     if (!c.passwordHash) c.passwordHash = await bcrypt.hash("ChangeMe123!", 12);

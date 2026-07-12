@@ -3,7 +3,7 @@ const router  = express.Router();
 
 const Order  = require("../../models/Order.model");
 const Bill   = require("../../models/Bill.model");
-const Client = require("../../models/Client.model");
+const Seller = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 
@@ -62,7 +62,7 @@ router.get("/dashboard", async (req, res) => {
         .lean(),
 
       // Top 5 clients by revenue
-      Client.find({})
+      Seller.find({})
         .sort({ totalRevenue: -1 })
         .limit(5)
         .select("name phone totalOrders totalRevenue pendingPayments")
@@ -362,8 +362,8 @@ router.get("/outstanding-payments", async (req, res) => {
 // ── GET /api/admin/reports/client-revenue/:clientId ──────────
 router.get("/client-revenue/:clientId", async (req, res) => {
   try {
-    const client = await Client.findById(req.params.clientId).lean({ virtuals: true });
-    if (!client) return res.status(404).json({ success: false, message: "Client not found" });
+    const client = await Seller.findById(req.params.clientId).lean({ virtuals: true });
+    if (!client) return res.status(404).json({ success: false, message: "Seller not found" });
 
     // Monthly revenue for this client
     const monthlyRevenue = await Bill.aggregate([

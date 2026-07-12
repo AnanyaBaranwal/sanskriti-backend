@@ -26,7 +26,7 @@ const galleryRoutes            = require("./routes/gallery.routes");
 
 
 // ── Admin routes ──────────────────────────────────────────────
-const adminClientRoutes    = require("./routes/admin/clients.admin.routes");
+const adminClientRoutes    = require("./routes/admin/seller.admin.routes");
 const adminInventoryRoutes = require("./routes/admin/inventory.admin.routes");
 const adminReportsRoutes   = require("./routes/admin/reports.admin.routes");
 const adminExportRoutes    = require("./routes/admin/export.admin.routes");

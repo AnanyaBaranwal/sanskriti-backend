@@ -1,7 +1,7 @@
 const express  = require("express");
 const router   = express.Router();
 const mongoose = require("mongoose");
-const Client   = require("../models/Client.model");
+const Seller   = require("../models/Seller.model");
 const Order    = require("../models/Order.model");
 const { protect } = require("../middleware/auth.middleware");
 
@@ -13,12 +13,12 @@ router.get("/stats", async (req, res) => {
   try {
     const sellerId = new mongoose.Types.ObjectId(req.seller.id);
     const [totalCustomers, agg, repeatCustomers] = await Promise.all([
-      Client.countDocuments({ sellerId }),
-      Client.aggregate([
+      Seller.countDocuments({ sellerId }),
+      Seller.aggregate([
         { $match: { sellerId } },
         { $group: { _id: null, revenue: { $sum: "$totalRevenue" }, pending: { $sum: "$pendingPayments" } } },
       ]),
-      Client.countDocuments({ sellerId, totalOrders: { $gt: 1 } }),
+      Seller.countDocuments({ sellerId, totalOrders: { $gt: 1 } }),
     ]);
 
     res.json({
@@ -50,8 +50,8 @@ router.get("/", async (req, res) => {
     }
 
     const [customers, total] = await Promise.all([
-      Client.find(filter).sort(sort).skip((page - 1) * limit).limit(Number(limit)),
-      Client.countDocuments(filter),
+      Seller.find(filter).sort(sort).skip((page - 1) * limit).limit(Number(limit)),
+      Seller.countDocuments(filter),
     ]);
 
     res.json({ success: true, customers, total, page: Number(page), pages: Math.ceil(total / limit) || 1 });
@@ -64,7 +64,7 @@ router.get("/", async (req, res) => {
 // ── GET /api/customers/:id ─────────────────────────────────────
 router.get("/:id", async (req, res) => {
   try {
-    const customer = await Client.findOne({ _id: req.params.id, sellerId: req.seller.id });
+    const customer = await Seller.findOne({ _id: req.params.id, sellerId: req.seller.id });
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found" });
     res.json({ success: true, customer });
   } catch (err) {
@@ -75,7 +75,7 @@ router.get("/:id", async (req, res) => {
 // ── GET /api/customers/:id/orders — full order history ────────
 router.get("/:id/orders", async (req, res) => {
   try {
-    const customer = await Client.findOne({ _id: req.params.id, sellerId: req.seller.id });
+    const customer = await Seller.findOne({ _id: req.params.id, sellerId: req.seller.id });
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found" });
     const orders = await Order.find({ clientId: customer._id }).sort({ createdAt: -1 });
     res.json({ success: true, orders });
@@ -90,7 +90,7 @@ router.post("/:id/notes", async (req, res) => {
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ success: false, message: "Note text is required" });
 
-    const customer = await Client.findOneAndUpdate(
+    const customer = await Seller.findOneAndUpdate(
       { _id: req.params.id, sellerId: req.seller.id },
       { $push: { notes: { text: text.trim(), addedBy: req.seller.id, addedByName: req.seller.name || null } } },
       { new: true }

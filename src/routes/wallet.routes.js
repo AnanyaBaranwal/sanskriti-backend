@@ -20,7 +20,7 @@ router.get("/summary", getSummary);
 router.post("/credit", credit);
 router.post("/debit", debit);
 
-// Client wallet — NEW, admin-only (clients don't log in themselves)
+// Seller wallet — NEW, admin-only (clients don't log in themselves)
 router.get("/clients/:clientId/wallet", restrictTo("admin"), getClientWallet);
 
 module.exports = router;

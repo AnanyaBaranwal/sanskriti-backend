@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
-const Client = require("../models/Client.model");
+const Seller = require("../models/Seller.model");
 
 // ─── Helper: get or create seller wallet ───────────────────────────────────────
 const getOrCreateWallet = async (sellerId) => {
@@ -286,9 +286,9 @@ exports.getClientWallet = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const client = await Client.findById(clientId).select("name walletBalance totalRefunded");
+    const client = await Seller.findById(clientId).select("name walletBalance totalRefunded");
     if (!client) {
-      return res.status(404).json({ success: false, message: "Client not found" });
+      return res.status(404).json({ success: false, message: "Seller not found" });
     }
 
     const filter = { clientId, walletOwnerType: "CLIENT" };

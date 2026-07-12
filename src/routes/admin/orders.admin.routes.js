@@ -7,7 +7,7 @@ const path     = require("path");
 const mongoose = require("mongoose");
 
 const Order       = require("../../models/Order.model");
-const Client      = require("../../models/Client.model");
+const Seller      = require("../../models/Seller.model");
 const Wallet      = require("../../models/Wallet.model");
 const Transaction = require("../../models/Transaction.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");

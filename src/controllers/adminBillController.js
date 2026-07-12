@@ -2,13 +2,13 @@ const fs      = require("fs");
 const path    = require("path");
 const ExcelJS = require("exceljs");
 const Bill    = require("../models/Bill.model");
-const Client  = require("../models/Client.model");
+const Seller  = require("../models/Seller.model");
 const { generateInvoicePDF, ensureBillsDir } = require("../utils/invoicePdf");
 const { logAction } = require("../utils/audit");
 
 exports.listSellers = async (req, res) => {
   try {
-    const clients = await Client.find({ role: "seller" })
+    const clients = await Seller.find({ role: "seller" })
       .select("name company email phone gstNumber address sellerId")
       .sort({ company: 1, name: 1 })
       .lean();
@@ -31,7 +31,7 @@ exports.createManualBill = async (req, res) => {
       return res.status(400).json({ success:false, message:"Company, Product and Price are required" });
     }
 
-    const seller = await Client.findById(sellerId);
+    const seller = await Seller.findById(sellerId);
     if (!seller) return res.status(404).json({ success:false, message:"Company not found" });
 
     if (transactionId) {

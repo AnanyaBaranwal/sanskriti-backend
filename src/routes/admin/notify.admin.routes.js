@@ -3,7 +3,7 @@ const router     = express.Router();
 const nodemailer = require("nodemailer");
 const axios      = require("axios");
 
-const Client  = require("../../models/Client.model");
+const Seller  = require("../../models/Seller.model");
 const Order   = require("../../models/Order.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
@@ -31,10 +31,10 @@ router.post("/email-bulk", async (req, res) => {
 
     let clients;
     if (all) {
-      clients = await Client.find({ email: { $ne: null, $exists: true } }).select("name email").lean();
+      clients = await Seller.find({ email: { $ne: null, $exists: true } }).select("name email").lean();
     } else {
       if (!clientIds?.length) return res.status(400).json({ success: false, message: "clientIds or all:true required" });
-      clients = await Client.find({ _id: { $in: clientIds }, email: { $ne: null } }).select("name email").lean();
+      clients = await Seller.find({ _id: { $in: clientIds }, email: { $ne: null } }).select("name email").lean();
     }
 
     const results = { sent: 0, failed: 0, errors: [] };
@@ -88,10 +88,10 @@ router.post("/whatsapp-bulk", async (req, res) => {
 
     let clients;
     if (all) {
-      clients = await Client.find({}).select("name phone").lean();
+      clients = await Seller.find({}).select("name phone").lean();
     } else {
       if (!clientIds?.length) return res.status(400).json({ success: false, message: "clientIds or all:true required" });
-      clients = await Client.find({ _id: { $in: clientIds } }).select("name phone").lean();
+      clients = await Seller.find({ _id: { $in: clientIds } }).select("name phone").lean();
     }
 
     const results = { sent: 0, failed: 0, errors: [] };
@@ -205,7 +205,7 @@ router.get("/clients", async (req, res) => {
     const filter = {};
     if (search) filter.$or = [{ name: { $regex: search, $options: "i" } }, { phone: { $regex: search, $options: "i" } }];
 
-    const clients = await Client.find(filter)
+    const clients = await Seller.find(filter)
       .select("name phone email totalOrders")
       .sort({ totalRevenue: -1 })
       .limit(100)

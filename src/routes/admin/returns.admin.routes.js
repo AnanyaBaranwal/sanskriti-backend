@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 
 const Return      = require("../../models/Return.model");
 const Order       = require("../../models/Order.model");
-const Client       = require("../../models/Client.model");
+const Seller       = require("../../models/Seller.model");
 const Transaction  = require("../../models/Transaction.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
@@ -298,7 +298,7 @@ router.patch("/:id/notes", async (req, res) => {
 });
 
 // ── PATCH /api/admin/returns/:id/refund ──────────────────────────
-// CHANGED: credits the CLIENT's wallet (Client.walletBalance), not the
+// CHANGED: credits the CLIENT's wallet (Seller.walletBalance), not the
 // seller's Wallet. Re-validates the cap a SECOND time right before
 // crediting — defense in depth. Wraps the wallet credit + return update
 // + order update in one Mongo transaction so partial failures can't
@@ -330,7 +330,7 @@ router.patch("/:id/refund", async (req, res) => {
       return res.status(400).json({ success: false, message: "This return has no linked client — cannot credit a wallet. Contact support to resolve manually." });
     }
 
-    const client = await Client.findById(ret.clientId).session(session);
+    const client = await Seller.findById(ret.clientId).session(session);
     if (!client) {
       await session.abortTransaction();
       return res.status(404).json({ success: false, message: "Linked client record not found" });
@@ -339,7 +339,7 @@ router.patch("/:id/refund", async (req, res) => {
     const balanceBefore = client.walletBalance;
     const balanceAfter  = balanceBefore + ret.refundAmount;
 
-    await Client.findByIdAndUpdate(
+    await Seller.findByIdAndUpdate(
       client._id,
       { $inc: { walletBalance: ret.refundAmount, totalRefunded: ret.refundAmount } },
       { session }

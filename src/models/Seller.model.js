@@ -1,8 +1,18 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
+const noteSchema = new mongoose.Schema(
+  {
+    text: { type: String, required: true, trim: true },
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Seller" },
+    addedByName: { type: String },
+  },
+  { timestamps: true }
+);
+
 const sellerSchema = new mongoose.Schema(
   {
+    // ── Identity / auth ──────────────────────────────────────────
     name: {
       type: String,
       required: [true, "Name is required"],
@@ -53,7 +63,6 @@ const sellerSchema = new mongoose.Schema(
       type: String,
       select: false,
     },
-
     passwordResetToken: {
       type: String,
       select: false,
@@ -62,28 +71,57 @@ const sellerSchema = new mongoose.Schema(
       type: Date,
       select: false,
     },
-    // Business details (filled later during KYC)
-    businessName: String,
-    gstNumber: String,
+
+    // ── Searchable business identifier ───────────────────────────
+    // Auto-generated (e.g. SEL-0001) so admin can pull a seller record
+    // by just searching this code.
+    sellerId: {
+      type: String,
+      unique: true,
+      index: true,
+    },
+
+    // ── Business details ─────────────────────────────────────────
+    company: { type: String, trim: true, default: "" }, // e.g. "Rayeen Traders"
+    gstNumber: { type: String, trim: true, default: "" },
     address: {
       street: String,
       city: String,
       state: String,
       pincode: String,
     },
-  
-    profilePhoto: String,
+
+    // ── Internal admin notes ──────────────────────────────────────
+    notes: [noteSchema],
+
+    // ── Cached order/revenue stats ───────────────────────────────
+    totalOrders: { type: Number, default: 0 },
+    totalRevenue: { type: Number, default: 0 },
+    pendingPayments: { type: Number, default: 0 },
+    returnedOrders: { type: Number, default: 0 },
+    lastOrderAt: { type: Date, default: null },
+
+    // ── Wallet ──────────────────────────────────────────────────
+    walletBalance: {
+      type: Number,
+      default: 0,
+      min: [0, "Wallet balance cannot be negative"],
+    },
+    totalRefunded: { type: Number, default: 0 },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Hash password before saving
+// Auto-generate sellerId (SEL-0001, SEL-0002, ...)
 sellerSchema.pre("save", async function (next) {
-  if (!this.isModified("passwordHash")) return next();
-  const salt = await bcrypt.genSalt(12);
-  this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+  if (!this.sellerId) {
+    const count = await mongoose.model("Seller").countDocuments();
+    this.sellerId = `SEL-${String(count + 1).padStart(4, "0")}`;
+  }
+  if (this.isModified("passwordHash") && this.passwordHash) {
+    const salt = await bcrypt.genSalt(12);
+    this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+  }
   next();
 });
 
@@ -99,7 +137,19 @@ sellerSchema.methods.toJSON = function () {
   delete obj.refreshToken;
   delete obj.emailVerifyToken;
   delete obj.emailVerifyExpires;
+  delete obj.passwordResetToken;
+  delete obj.passwordResetExpires;
   return obj;
 };
 
-module.exports = mongoose.model("Seller", sellerSchema);
+sellerSchema.virtual("returnPercent").get(function () {
+  if (!this.totalOrders) return 0;
+  return Math.round((this.returnedOrders / this.totalOrders) * 100);
+});
+sellerSchema.set("toJSON", { virtuals: true });
+sellerSchema.set("toObject", { virtuals: true });
+
+sellerSchema.index({ phone: 1 });
+sellerSchema.index({ name: "text", phone: "text", email: "text", company: "text" });
+
+module.exports = mongoose.model("Seller", sellerSchema, "sellers");
