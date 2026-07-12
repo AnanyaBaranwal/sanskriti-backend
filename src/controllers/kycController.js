@@ -1,4 +1,4 @@
-const Kyc = require("../models/kyc.model");
+const Kyc = require("../models/Kyc.model");
 
 // ─── GET /api/seller/kyc ──────────────────────────────────────────────────────
 // Reads from the standalone Kyc collection — nothing here touches Seller.

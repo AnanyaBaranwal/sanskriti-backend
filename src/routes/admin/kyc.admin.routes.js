@@ -4,7 +4,7 @@ const fs       = require("fs");
 const path     = require("path");
 
 const Seller = require("../../models/Seller.model");
-const Kyc    = require("../../models/kyc.model");
+const Kyc    = require("../../models/Kyc.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
 const { uploadKYCAdmin } = require("../../middleware/upload.middleware");
