@@ -99,6 +99,8 @@ exports.uploadKYC = multer({
   { name: "panDocument", maxCount: 1 },
   { name: "aadharDocument", maxCount: 1 },
   { name: "cancelledCheque", maxCount: 1 },
+  { name: "businessDocument", maxCount: 1 },
+  { name: "selfieDocument", maxCount: 1 },
 ]);
 
 // KYC upload performed BY AN ADMIN on behalf of a seller
@@ -110,6 +112,8 @@ exports.uploadKYCAdmin = multer({
   { name: "panDocument", maxCount: 1 },
   { name: "aadharDocument", maxCount: 1 },
   { name: "cancelledCheque", maxCount: 1 },
+  { name: "businessDocument", maxCount: 1 },
+  { name: "selfieDocument", maxCount: 1 },
 ]);
 
 // Profile photo upload — single file

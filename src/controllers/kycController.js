@@ -48,6 +48,12 @@ exports.uploadKYC = async (req, res) => {
       if (req.files.cancelledCheque) {
         update.$set.cancelledCheque = req.files.cancelledCheque[0].path;
       }
+      if (req.files.businessDocument) {
+        update.$set.businessDocument = req.files.businessDocument[0].path;
+      }
+      if (req.files.selfieDocument) {
+        update.$set.selfieDocument = req.files.selfieDocument[0].path;
+      }
     }
 
     const kyc = await Kyc.findOneAndUpdate(

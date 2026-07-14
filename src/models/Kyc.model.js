@@ -21,6 +21,9 @@ const kycSchema = new mongoose.Schema(
     bankAccountName:   String,
     cancelledCheque:   String,
 
+    businessDocument: String, // GST certificate / trade licence
+    selfieDocument:   String, // Live selfie with identity document
+
     status: {
       type: String,
       enum: ["not_submitted", "under_review", "approved", "rejected"],
