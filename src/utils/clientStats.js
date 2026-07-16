@@ -1,17 +1,20 @@
-const Seller = require("../models/Seller.model");
-const Order  = require("../models/Order.model");
+const Customer = require("../models/Customer.model");
+const Order    = require("../models/Order.model");
 
 /**
- * Recalculate and save cached stats for a client.
+ * Recalculate and save cached stats for a CUSTOMER (buyer).
  * Call this after any order is created, updated, or deleted.
  *
+ * NOTE: this used to write onto the Seller collection — that was a bug.
+ * Buyers are never sellers; they now live in their own Customer collection.
+ *
  * Usage:
- *   await refreshClientStats(clientId);
+ *   await refreshCustomerStats(customerId);
  */
-const refreshClientStats = async (clientId) => {
-  if (!clientId) return;
+const refreshCustomerStats = async (customerId) => {
+  if (!customerId) return;
   try {
-    const orders = await Order.find({ clientId }).lean();
+    const orders = await Order.find({ customerId }).lean();
 
     const totalOrders    = orders.length;
     const totalRevenue   = orders.reduce((sum, o) => sum + (o.total || 0), 0);
@@ -20,12 +23,11 @@ const refreshClientStats = async (clientId) => {
     const lastOrderAt    = sorted[0]?.createdAt || null;
 
     // pendingPayments = sum of totals for orders with UNPAID bills
-    // Simple approach: orders where paymentStatus is UNPAID
     const pendingPayments = orders
       .filter(o => o.paymentStatus === "UNPAID")
       .reduce((sum, o) => sum + (o.total || 0), 0);
 
-    await Seller.findByIdAndUpdate(clientId, {
+    await Customer.findByIdAndUpdate(customerId, {
       totalOrders,
       totalRevenue,
       returnedOrders,
@@ -33,18 +35,21 @@ const refreshClientStats = async (clientId) => {
       lastOrderAt,
     });
   } catch (err) {
-    console.error("[refreshClientStats] Failed:", err.message);
+    console.error("[refreshCustomerStats] Failed:", err.message);
   }
 };
 
 /**
- * Find or create a Seller from an order's buyer data.
- * Returns the client._id to store on the order.
+ * Find or create a Customer from an order's buyer data.
+ * Returns the customer._id to store on the order (as order.customerId).
+ *
+ * This is the function that used to upsert into the Seller collection —
+ * fixed to use Customer instead, so buyers never pollute Seller Management.
  */
-const findOrCreateClient = async ({ sellerId, buyer }) => {
+const findOrCreateCustomer = async ({ sellerId, buyer }) => {
   if (!buyer?.phone) return null;
   try {
-    const client = await Seller.findOneAndUpdate(
+    const customer = await Customer.findOneAndUpdate(
       { sellerId, phone: buyer.phone },
       {
         $setOnInsert: {
@@ -57,11 +62,11 @@ const findOrCreateClient = async ({ sellerId, buyer }) => {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
-    return client._id;
+    return customer._id;
   } catch (err) {
-    console.error("[findOrCreateClient] Failed:", err.message);
+    console.error("[findOrCreateCustomer] Failed:", err.message);
     return null;
   }
 };
 
-module.exports = { refreshClientStats, findOrCreateClient };
+module.exports = { refreshCustomerStats, findOrCreateCustomer };

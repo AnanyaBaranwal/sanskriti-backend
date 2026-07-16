@@ -1,8 +1,8 @@
 const Order = require("../models/Order.model");
 const mongoose = require("mongoose");
-const GalleryProduct = require("../models/GalleryProduct.model"); // NEW
-const Wallet = require("../models/Wallet.model"); // NEW — for the informational balance check
-const { findOrCreateClient, refreshClientStats } = require("../utils/clientStats");
+const GalleryProduct = require("../models/GalleryProduct.model");
+const Wallet = require("../models/Wallet.model");
+const { findOrCreateCustomer, refreshCustomerStats } = require("../utils/clientStats");
 
 // ── Helper: calculate totals ──────────────────────────────────
 const calculateTotals = (items, taxPercent = 0, discount = 0) => {
@@ -14,16 +14,6 @@ const calculateTotals = (items, taxPercent = 0, discount = 0) => {
 };
 
 // ── POST /api/orders ──────────────────────────────────────────
-// Every order is now sourced from the Gallery catalog: the seller already
-// received this sale on some marketplace and is buying stock from
-// Sanskriti at pure cost price to fulfil it.
-//
-// Body: {
-//   buyer: { name, phone, email, address:{street,city,state,pincode} },
-//   items: [{ galleryProductId, quantity, price }],   // price = seller's OWN selling price per unit
-//   platform, platformOrderId,
-//   taxPercent, discountAmount, paymentMethod, notes
-// }
 exports.createOrder = async (req, res) => {
   try {
     const { buyer, items, platform, platformOrderId, taxPercent, discountAmount, paymentMethod, notes } = req.body;
@@ -46,7 +36,6 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // ── Pull live gallery products (never trust client-sent cost data) ──
     const galleryProductIds = items.map(i => i.galleryProductId);
     const galleryProducts = await GalleryProduct.find({ _id: { $in: galleryProductIds }, isActive: true });
 
@@ -62,7 +51,7 @@ exports.createOrder = async (req, res) => {
           throw new Error(`"${gp.name}" is currently out of stock`);
         }
         const quantity = Math.max(1, Number(reqItem.quantity) || 1);
-        const price = Number(reqItem.price); // seller's own selling price per unit
+        const price = Number(reqItem.price);
         return {
           name: gp.name,
           description: gp.description || "",
@@ -85,8 +74,6 @@ exports.createOrder = async (req, res) => {
 
     const costTotal = processedItems.reduce((sum, i) => sum + i.costPrice * i.quantity, 0);
 
-    // Informational balance check — the AUTHORITATIVE check happens again
-    // when admin confirms the order (in orders.admin.routes.js).
     const wallet = await Wallet.findOne({ sellerId: req.seller.id });
     const insufficientBalance = !wallet || wallet.balance < costTotal;
 
@@ -106,11 +93,11 @@ exports.createOrder = async (req, res) => {
       statusHistory: [{ status: "PENDING", note: "Order created — pending admin confirmation before gallery stock is charged" }],
     });
 
-    // Link to client (unchanged from before)
-    const clientId = await findOrCreateClient({ sellerId: req.seller.id, buyer: order.buyer });
-    if (clientId) {
-      await Order.findByIdAndUpdate(order._id, { clientId });
-      await refreshClientStats(clientId);
+    // Link to customer — buyers now live in the Customer collection, never Seller.
+    const customerId = await findOrCreateCustomer({ sellerId: req.seller.id, buyer: order.buyer });
+    if (customerId) {
+      await Order.findByIdAndUpdate(order._id, { customerId });
+      await refreshCustomerStats(customerId);
     }
 
     res.status(201).json({
@@ -158,7 +145,6 @@ exports.getOrders = async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    // Summary stats
     const stats = await Order.aggregate([
       { $match: { sellerId: new mongoose.Types.ObjectId(req.seller.id) } },
       {
@@ -218,7 +204,6 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // Prevent going back to previous status
     const statusFlow = ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED"];
     const currentIdx = statusFlow.indexOf(order.status);
     const newIdx = statusFlow.indexOf(status.toUpperCase());

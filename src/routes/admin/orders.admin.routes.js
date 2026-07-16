@@ -12,14 +12,14 @@ const Wallet      = require("../../models/Wallet.model");
 const Transaction = require("../../models/Transaction.model");
 const { protect, restrictTo } = require("../../middleware/auth.middleware");
 const { logAction } = require("../../utils/audit");
-const { findOrCreateClient, refreshClientStats } = require("../../utils/clientStats");
+const { findOrCreateCustomer, refreshCustomerStats } = require("../../utils/clientStats");
 
 router.use(protect, restrictTo("admin"));
 
 // ── Multer — memory storage for Excel uploads ─────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if ([".xlsx", ".xls"].includes(ext)) return cb(null, true);
@@ -37,7 +37,6 @@ const calculateTotals = (items, taxPercent = 0, discount = 0) => {
 };
 
 // ── Helper: hash for duplicate detection ─────────────────────
-// Two orders are duplicates if same buyer phone + same item names on same day
 const orderHash = (phone, items, date) => {
   const itemKey = items.map(i => `${i.name}:${i.quantity}`).sort().join("|");
   const dayKey  = new Date(date).toISOString().slice(0, 10);
@@ -45,11 +44,6 @@ const orderHash = (phone, items, date) => {
 };
 
 // ── Helper: flag product-cost refund as pending admin approval ──
-// Only flags — never touches the wallet. Wallet is credited only via
-// PATCH /api/admin/refunds/:id/approve.
-// CHANGED: refunds the GALLERY COST that was actually debited (order.costTotal)
-// instead of the retail subtotal — falls back to subtotal for old/manual
-// orders that have no costTotal (pre-Gallery orders, bulk uploads, etc.).
 const flagRefundPending = (order) => {
   if (!order.walletDeducted || order.walletRefunded || order.refundStatus === "PENDING") return null;
   order.refundStatus         = "PENDING";
@@ -58,18 +52,21 @@ const flagRefundPending = (order) => {
 };
 
 // ── GET /api/admin/orders ─────────────────────────────────────
-// All orders across all sellers (admin view)
+// All orders across all sellers (admin view).
+// Populates BOTH sellerId (who sold it) and customerId (who bought it),
+// so the admin UI can show seller + buyer info side by side per row.
 router.get("/", async (req, res) => {
   try {
     const {
-      status, search, from, to, clientId, platform, // NEW: platform filter
+      status, search, from, to, customerId, sellerId, platform,
       page = 1, limit = 20,
     } = req.query;
 
     const filter = {};
-    if (status)   filter.status = status.toUpperCase();
-    if (clientId) filter.clientId = clientId;
-    if (platform) filter.platform = platform; // NEW
+    if (status)     filter.status = status.toUpperCase();
+    if (customerId) filter.customerId = customerId;
+    if (sellerId)   filter.sellerId = sellerId;
+    if (platform)   filter.platform = platform;
     if (from || to) {
       filter.createdAt = {};
       if (from) filter.createdAt.$gte = new Date(from);
@@ -80,16 +77,20 @@ router.get("/", async (req, res) => {
         { orderNumber:   { $regex: search, $options: "i" } },
         { "buyer.name":  { $regex: search, $options: "i" } },
         { "buyer.phone": { $regex: search, $options: "i" } },
-        { platformOrderId: { $regex: search, $options: "i" } }, // NEW
+        { platformOrderId: { $regex: search, $options: "i" } },
       ];
     }
 
     const [orders, total] = await Promise.all([
-      Order.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(Number(limit)),
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(Number(limit))
+        .populate("sellerId", "name email phone company")
+        .populate("customerId", "name phone email address"),
       Order.countDocuments(filter),
     ]);
 
-    // Status breakdown + revenue — used by the admin stat cards (Pending/Confirmed/Shipped/Delivered)
     const stats = await Order.aggregate([
       { $match: filter },
       { $group: { _id: "$status", count: { $sum: 1 }, revenue: { $sum: "$total" } } },
@@ -107,16 +108,6 @@ router.get("/", async (req, res) => {
 });
 
 // ── PATCH /api/admin/orders/:id ───────────────────────────────
-// Full admin edit — unlike the seller's own PATCH /api/orders/:id, this
-// works on ANY order regardless of status (admin needs to be able to fix
-// a typo'd phone number or shipping address on a SHIPPED order, etc).
-//
-// Guard: once the wallet has already been debited for this order
-// (walletDeducted === true), editing `items` (and therefore subtotal/
-// tax/total/costTotal) is blocked — changing the cost basis after money
-// has already moved would silently desync the wallet transaction from
-// the order. Buyer info, platform, platformOrderId, and notes can still
-// be edited freely at any time.
 router.patch("/:id", async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -124,13 +115,11 @@ router.patch("/:id", async (req, res) => {
 
     const before = order.toObject();
 
-    // ── Always-editable fields, regardless of order status ─────────────
     const alwaysEditable = ["buyer", "platform", "platformOrderId", "notes", "paymentMethod", "paymentStatus"];
     alwaysEditable.forEach(f => {
       if (req.body[f] !== undefined) order[f] = req.body[f];
     });
 
-    // ── Items / cost-affecting fields — blocked after wallet debit ──────
     const wantsToEditItems = req.body.items !== undefined
       || req.body.taxPercent !== undefined
       || req.body.discountAmount !== undefined;
@@ -144,9 +133,6 @@ router.patch("/:id", async (req, res) => {
       }
 
       if (req.body.items !== undefined) {
-        // Re-derive totals exactly like createOrder does, preserving any
-        // existing galleryProductId/costPrice snapshots per line item where
-        // the admin didn't explicitly change them.
         const items = req.body.items.map((item, idx) => {
           const existing = order.items[idx];
           const quantity = Number(item.quantity) || 1;
@@ -185,7 +171,7 @@ router.patch("/:id", async (req, res) => {
 
     await order.save();
 
-    if (order.clientId) await refreshClientStats(order.clientId);
+    if (order.customerId) await refreshCustomerStats(order.customerId);
 
     await logAction(req, {
       action: "UPDATE",
@@ -205,16 +191,6 @@ router.patch("/:id", async (req, res) => {
 });
 
 // ── POST /api/admin/orders/bulk-upload ────────────────────────
-// Excel columns expected (row 1 = header, row 2+ = data):
-// buyer_name | buyer_phone | buyer_email | city | state | pincode |
-// item1_name | item1_qty | item1_price |
-// item2_name | item2_qty | item2_price |  (optional — up to 5 items)
-// tax_percent | discount | payment_method | notes
-//
-// NOTE: bulk-uploaded orders are NOT gallery-sourced (no galleryProductId /
-// costPrice per item), so their costTotal stays 0 and CONFIRMED will fall
-// back to debiting the full retail `total`, exactly as before. Left
-// unchanged intentionally.
 router.post("/bulk-upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: "Excel file is required" });
@@ -227,7 +203,6 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
   const results = { created: 0, skipped: 0, errors: [] };
   const createdOrders = [];
 
-  // Collect existing hashes from today to detect duplicates against DB
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
   const todayOrders = await Order.find({ createdAt: { $gte: todayStart } })
     .select("buyer.phone items createdAt").lean();
@@ -235,10 +210,8 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
     todayOrders.map(o => orderHash(o.buyer.phone, o.items, o.createdAt))
   );
 
-  // Track hashes within this upload batch to catch intra-batch duplicates
   const batchHashes = new Set();
 
-  // Skip header row (row 1)
   const rows = [];
   ws.eachRow((row, rowNum) => { if (rowNum > 1) rows.push({ rowNum, row }); });
 
@@ -261,7 +234,6 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         continue;
       }
 
-      // Parse up to 5 items (columns 7–21, groups of 3)
       const items = [];
       for (let i = 0; i < 5; i++) {
         const base     = 7 + i * 3;
@@ -283,7 +255,6 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
       const paymentMethod = v(24)?.toUpperCase() || "OTHER";
       const notes         = v(25) || "";
 
-      // Duplicate check
       const hash = orderHash(buyerPhone, items, new Date());
       if (existingHashes.has(hash) || batchHashes.has(hash)) {
         results.skipped++;
@@ -307,11 +278,11 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         statusHistory: [{ status: "PENDING", note: "Created via bulk upload" }],
       });
 
-      // Link to client
-      const clientId = await findOrCreateClient({ sellerId: req.seller.id, buyer: order.buyer });
-      if (clientId) {
-        await Order.findByIdAndUpdate(order._id, { clientId });
-        await refreshClientStats(clientId);
+      // Link to customer — never Seller.
+      const customerId = await findOrCreateCustomer({ sellerId: req.seller.id, buyer: order.buyer });
+      if (customerId) {
+        await Order.findByIdAndUpdate(order._id, { customerId });
+        await refreshCustomerStats(customerId);
       }
 
       createdOrders.push(order._id);
@@ -336,10 +307,6 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
 });
 
 // ── PATCH /api/admin/orders/bulk-status ──────────────────────
-// Body: { orderIds: [], status: "SHIPPED", note: "..." }
-// NOTE: bulk status changes do NOT trigger wallet debit/refund logic —
-// use the single-order PATCH /:id/status endpoint for CONFIRMED/CANCELLED
-// transitions that should move money.
 router.patch("/bulk-status", async (req, res) => {
   try {
     const { orderIds, status, note } = req.body;
@@ -393,15 +360,6 @@ router.patch("/bulk-status", async (req, res) => {
 });
 
 // ── PATCH /api/admin/orders/:id/status ───────────────────────
-// Single order status update (admin can update any seller's order).
-// CONFIRMED (first time) → debits the seller's wallet.
-//   CHANGED: debits order.costTotal (pure Gallery cost — no margin,
-//   packaging, shipping, or GST) instead of the full retail order.total.
-//   Falls back to order.total for old/manual/bulk-upload orders that have
-//   no costTotal (i.e. weren't sourced from the Gallery), so nothing about
-//   your existing non-Gallery flow changes.
-// CANCELLED → flags the gallery cost as pending refund approval;
-// nothing is credited until admin approves via PATCH /api/admin/refunds/:id/approve.
 router.patch("/:id/status", async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -425,13 +383,10 @@ router.patch("/:id/status", async (req, res) => {
     const before = order.status;
     let walletMessage = null;
 
-    // ── Deduct from seller wallet the first time it's CONFIRMED ──
     if (newStatus === "CONFIRMED" && !order.walletDeducted) {
       const wallet = await Wallet.findOne({ sellerId: order.sellerId }).session(session);
       const currentBalance = wallet?.balance || 0;
 
-      // CHANGED: use the Gallery cost total, not the retail total, when this
-      // order was sourced from the Gallery (costTotal > 0).
       const amount = order.costTotal > 0 ? order.costTotal : order.total;
       const isGallerySourced = order.costTotal > 0;
 
@@ -475,7 +430,6 @@ router.patch("/:id/status", async (req, res) => {
         : `₹${amount.toLocaleString("en-IN")} deducted from seller wallet`;
     }
 
-    // ── Flag product-cost refund as pending admin approval on cancellation ──
     if (newStatus === "CANCELLED") {
       const msg = flagRefundPending(order);
       if (msg) walletMessage = msg;
@@ -508,8 +462,6 @@ router.patch("/:id/status", async (req, res) => {
 });
 
 // ── PATCH /api/admin/orders/:id/return ───────────────────────
-// Mark order as RETURNED with reason. Flags the gallery cost as pending
-// seller-wallet refund — admin must approve via PATCH /api/admin/refunds/:id/approve.
 router.patch("/:id/return", async (req, res) => {
   try {
     const { reason, refundAmount } = req.body;
@@ -529,7 +481,7 @@ router.patch("/:id/return", async (req, res) => {
     order.paymentStatus   = refundAmount ? "REFUNDED" : order.paymentStatus;
     order.returnReason    = reason || "Return requested";
     order.returnedAt      = new Date();
-    order.refundAmount    = refundAmount || 0; // buyer-side refund, unrelated to seller wallet
+    order.refundAmount    = refundAmount || 0;
 
     const walletMessage = flagRefundPending(order);
 
@@ -541,8 +493,7 @@ router.patch("/:id/return", async (req, res) => {
 
     await order.save();
 
-    // Update client stats
-    if (order.clientId) await refreshClientStats(order.clientId);
+    if (order.customerId) await refreshCustomerStats(order.customerId);
 
     await logAction(req, {
       action:      "STATUS_CHANGE",
@@ -562,7 +513,6 @@ router.patch("/:id/return", async (req, res) => {
 });
 
 // ── GET /api/admin/orders/returns ────────────────────────────
-// List all returned orders
 router.get("/returns", async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -572,6 +522,8 @@ router.get("/returns", async (req, res) => {
         .sort({ returnedAt: -1 })
         .skip((page - 1) * limit)
         .limit(Number(limit))
+        .populate("sellerId", "name email phone company")
+        .populate("customerId", "name phone email address")
         .lean(),
       Order.countDocuments({ status: "RETURNED" }),
     ]);
@@ -585,7 +537,6 @@ router.get("/returns", async (req, res) => {
 });
 
 // ── GET /api/admin/orders/bulk-upload-template ───────────────
-// Download the Excel template for bulk upload
 router.get("/bulk-upload-template", async (req, res) => {
   try {
     const wb = new ExcelJS.Workbook();
@@ -619,13 +570,11 @@ router.get("/bulk-upload-template", async (req, res) => {
       { header: "notes",           key: "notes",          width: 25 },
     ];
 
-    // Style header row
     const headerRow = ws.getRow(1);
     headerRow.font = { bold: true, color: { argb: "FF3D2B1F" } };
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC9A84C" } };
     headerRow.height = 20;
 
-    // Sample row
     ws.addRow([
       "Rahul Sharma", "9876543210", "rahul@example.com",
       "Mumbai", "Maharashtra", "400001",
@@ -635,7 +584,6 @@ router.get("/bulk-upload-template", async (req, res) => {
       18, 0, "ONLINE", "Handle with care",
     ]);
 
-    // Instructions sheet
     const infoWs = wb.addWorksheet("Instructions");
     infoWs.getCell("A1").value = "BULK ORDER UPLOAD — INSTRUCTIONS";
     infoWs.getCell("A1").font = { bold: true, size: 14 };

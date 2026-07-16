@@ -1,33 +1,16 @@
 const mongoose = require("mongoose");
 
-// ⚠️ Your Order collection has 430 REAL historical orders from an older
-// system, with a completely different shape (orderId, userId, skuId, price,
-// currency, deliveryPartner, trackingId, orderDate, status values like
-// "IN_PROGRESS") than what the current app writes (sellerId, buyer, items,
-// subtotal, total, orderNumber like "SNK-...").
+// ⚠️ All legacy pre-app historical orders have been deleted by the team, so
+// the extreme legacy-permissiveness this schema used to need is no longer
+// load-bearing. I'm leaving `strict: false` and the loosely-typed `status`/
+// `platform` fields in place anyway — they're harmless for new orders and
+// cheap insurance if another bulk import ever happens — but nothing here
+// depends on legacy shape anymore.
 //
-// This version is deliberately PERMISSIVE so nothing about those 430 real
-// orders can ever be corrupted or rejected by Mongoose:
-//   1. `strict: false` — any field on a document that ISN'T declared in this
-//      schema (orderId, userId, skuId, price, currency, deliveryPartner,
-//      trackingId, orderDate, id, and anything else on legacy docs I haven't
-//      even seen) is preserved as-is on every save, never silently dropped.
-//   2. No `required: true` anywhere — legacy docs are missing sellerId,
-//      buyer, subtotal, total entirely. Application-level validation (in
-//      orderController.js / orders.admin.routes.js) already enforces what's
-//      required for NEW orders created through the app; the schema itself
-//      no longer blocks a legacy doc from being saved.
-//   3. No `enum` on `status` or `platform` — legacy status values like
-//      "IN_PROGRESS" (and possibly others I haven't seen across all 430)
-//      must never fail validation. Each route already validates against its
-//      own explicit `validStatuses` array before writing, so schema-level
-//      enum enforcement was redundant anyway.
-//
-// I've also explicitly declared the legacy fields I've seen (orderId,
-// userId, skuId, price, currency, deliveryPartner, trackingId, orderDate)
-// so they show up cleanly with the right types — but even if some OTHER
-// legacy order has a field I haven't seen, strict:false means it survives
-// regardless.
+// KEY CHANGE: `clientId` (which pointed at the Seller collection — the bug
+// that caused buyers to be upserted into Seller) has been replaced with
+// `customerId`, which points at the new, separate Customer collection.
+// `sellerId` is unchanged — it always meant "which real seller sold this."
 
 const orderItemSchema = new mongoose.Schema(
   {
@@ -41,31 +24,33 @@ const orderItemSchema = new mongoose.Schema(
     galleryProductId: { type: mongoose.Schema.Types.ObjectId, ref: "GalleryProduct", default: null },
     costPrice:        { type: Number, default: 0 }, // pure cost price per unit, snapshotted at order time
   },
-  { strict: false } // preserve anything on legacy line items too
+  { strict: false }
 );
 
 const orderSchema = new mongoose.Schema(
   {
+    // Who SOLD this — always a real Seller.
     sellerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Seller",
-      default: null, // NOT required — legacy orders have none
+      default: null,
     },
 
-    clientId: {
+    // Who BOUGHT this — always a Customer, never a Seller.
+    customerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      ref: "Customer",
       default: null,
     },
 
     orderNumber: {
       type: String,
       unique: true,
-      sparse: true, // allow legacy docs without one, and avoid unique-index conflicts on null
+      sparse: true,
     },
 
     buyer: {
-      name:  { type: String, trim: true }, // NOT required — legacy orders have no buyer object at all
+      name:  { type: String, trim: true },
       phone: { type: String },
       email: { type: String, trim: true, lowercase: true },
       address: {
@@ -78,13 +63,13 @@ const orderSchema = new mongoose.Schema(
 
     items: [orderItemSchema],
 
-    subtotal:        { type: Number, default: 0 }, // NOT required
+    subtotal:        { type: Number, default: 0 },
     taxAmount:       { type: Number, default: 0 },
     discountAmount:  { type: Number, default: 0 },
-    total:           { type: Number, default: 0 },  // NOT required
+    total:           { type: Number, default: 0 },
 
     status: {
-      type: String, // no enum — legacy values like "IN_PROGRESS" must never fail validation
+      type: String,
       default: "PENDING",
     },
 
@@ -126,32 +111,18 @@ const orderSchema = new mongoose.Schema(
 
     // ── Gallery sourcing ──────────────────────────────────────────────────
     platform: {
-      type: String, // no enum — keep flexible, matches legacy "Amazon" fine either way
+      type: String,
       default: null,
     },
     platformOrderId: { type: String, trim: true, default: "" },
     costTotal:       { type: Number, default: 0 },
-
-    // ── Explicitly-declared legacy fields (seen on real historical orders) ──
-    id:              { type: String },
-    orderId:         { type: String },
-    userId:          { type: String },
-    skuId:           { type: String },
-    price:           { type: Number },
-    currency:        { type: String },
-    deliveryPartner: { type: String },
-    trackingId:      { type: String },
-    orderDate:       { type: Date },
   },
   {
     timestamps: true,
-    strict: false, // ← the real safety net: ANY field not declared above survives untouched on save
+    strict: false,
   }
 );
 
-// Only auto-generate an order number for NEW app-created orders that don't
-// already have one — legacy docs already have their own (e.g. "ORD-...")
-// and are left completely alone.
 orderSchema.pre("save", async function (next) {
   if (!this.orderNumber) {
     const count = await mongoose.model("Order").countDocuments();
@@ -165,7 +136,7 @@ orderSchema.pre("save", async function (next) {
 
 orderSchema.index({ "buyer.name": "text", "buyer.phone": "text", orderNumber: "text" });
 orderSchema.index({ sellerId: 1, createdAt: -1 });
-orderSchema.index({ clientId: 1 });
+orderSchema.index({ customerId: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ refundStatus: 1 });
 
