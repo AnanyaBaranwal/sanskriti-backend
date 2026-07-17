@@ -9,6 +9,14 @@ const { escapeRegex } = require("../../utils/escapeRegex");
 // All seller admin routes require login + admin role
 router.use(protect, restrictTo("admin"));
 
+// Staff/system roles that should NEVER show up in Seller Management —
+// this page is for managing actual sellers, not admin/staff accounts.
+// $nin also correctly includes documents where `role` is missing entirely
+// (treated as "not in" the excluded list), so real sellers without a role
+// field set still show up as expected.
+const STAFF_ROLES = ["admin", "manager", "employee"];
+const excludeStaff = { role: { $nin: STAFF_ROLES } };
+
 // ── GET /api/admin/sellers ─────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -18,7 +26,7 @@ router.get("/", async (req, res) => {
       sortBy = "createdAt", sortDir = "desc",
     } = req.query;
 
-    const query = {};
+    const query = { ...excludeStaff };
 
     if (search) {
       const safe = escapeRegex(search);
@@ -60,7 +68,7 @@ router.get("/", async (req, res) => {
 // ── GET /api/admin/sellers/:id ─────────────────────────────────
 router.get("/:id", async (req, res) => {
   try {
-    const seller = await Seller.findById(req.params.id).lean();
+    const seller = await Seller.findOne({ _id: req.params.id, ...excludeStaff }).lean();
     if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
 
     res.json({ success: true, seller });
@@ -84,7 +92,7 @@ router.patch("/:id", async (req, res) => {
       return res.status(400).json({ success: false, message: "No valid fields provided to update" });
     }
 
-    const before = await Seller.findById(req.params.id).lean();
+    const before = await Seller.findOne({ _id: req.params.id, ...excludeStaff }).lean();
     if (!before) return res.status(404).json({ success: false, message: "Seller not found" });
 
     const seller = await Seller.findByIdAndUpdate(
@@ -126,7 +134,7 @@ router.patch("/:id/status", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid status value" });
     }
 
-    const before = await Seller.findById(req.params.id).lean();
+    const before = await Seller.findOne({ _id: req.params.id, ...excludeStaff }).lean();
     if (!before) return res.status(404).json({ success: false, message: "Seller not found" });
 
     const seller = await Seller.findByIdAndUpdate(
@@ -155,7 +163,7 @@ router.patch("/:id/status", async (req, res) => {
 // ── DELETE /api/admin/sellers/:id ──────────────────────────────
 router.delete("/:id", async (req, res) => {
   try {
-    const seller = await Seller.findByIdAndDelete(req.params.id);
+    const seller = await Seller.findOneAndDelete({ _id: req.params.id, ...excludeStaff });
     if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
 
     await logAction(req, {
