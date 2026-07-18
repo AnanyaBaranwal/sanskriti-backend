@@ -8,9 +8,6 @@ const { generateInvoicePDF, ensureBillsDir } = require("../utils/invoicePdf");
 const { logAction } = require("../utils/audit");
 
 // ── GET /api/admin/bills/stats ──────────────────────────────────
-// Powers the stat cards on the Bills page: total revenue, total bills,
-// this month's revenue, this month's bill count. Always computed across
-// ALL bills — not just the current page — since these are summary totals.
 exports.getBillingStats = async (req, res) => {
   try {
     const now = new Date();
@@ -53,12 +50,6 @@ exports.listSellers = async (req, res) => {
   }
 };
 
-// ── GET /api/admin/bills/orders ────────────────────────────────
-// Powers the unified "All Orders" table on the Bills page. Returns every
-// order (paginated/searchable), each with its linked bill attached if one
-// exists (bill: {_id, invoiceNumber, pdfUrl}) or null if it doesn't — the
-// frontend uses this to decide whether to show "View Bill + Delete" or
-// "Create Bill" per row.
 exports.listOrdersForBilling = async (req, res) => {
   try {
     const { search = "", page = 1, limit = 20 } = req.query;
@@ -106,10 +97,6 @@ exports.listOrdersForBilling = async (req, res) => {
   }
 };
 
-// ── GET /api/admin/bills/order/:orderId ────────────────────────
-// Powers the "Order ID" auto-fill field on the Create Bill modal. Given an
-// order ID, returns the order (with seller populated) plus whether it
-// already has a bill, so the frontend can warn before double-billing.
 exports.getOrderForBilling = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId).populate("sellerId", "name company email phone");
@@ -119,7 +106,6 @@ exports.getOrderForBilling = async (req, res) => {
     const existingBill = await Bill.findOne({ orderId: order._id }).select("invoiceNumber");
     res.json({ success: true, order, existingBill: existingBill || null });
   } catch (err) {
-    // Invalid ObjectId format lands here too — give a clean message instead of a stack trace.
     res.status(400).json({ success: false, message: "Invalid order ID" });
   }
 };
@@ -221,17 +207,6 @@ exports.createManualBill = async (req, res) => {
   }
 };
 
-// ── POST /api/admin/bills/generate-from-order ──────────────────
-// Builds a bill directly from an existing Order — the seller (who's being
-// billed), and every line item (name/sku/qty/price) are pulled straight
-// from the order so the admin only has to supply the three charges that
-// aren't already known: shippingCharge, packagingCharge, and taxPercent.
-//
-// Line item pricing uses the Gallery COST price (item.costPrice) when
-// available — this bill represents what Sanskriti charges the seller for
-// stock, not what the seller charged their own customer. Falls back to
-// item.price for older/non-Gallery orders that have no costPrice recorded,
-// so this still works for every order rather than only Gallery-sourced ones.
 exports.createBillFromOrder = async (req, res) => {
   try {
     const {
@@ -272,8 +247,6 @@ exports.createBillFromOrder = async (req, res) => {
 
     const billItems = order.items.map((it) => {
       const qty = Number(it.quantity) || 1;
-      // Prefer cost price (what the seller owes Sanskriti); fall back to
-      // the order's selling price for orders with no costPrice recorded.
       const unitPrice = it.costPrice > 0 ? it.costPrice : (it.price || 0);
       return {
         name: it.name,
@@ -325,9 +298,6 @@ exports.createBillFromOrder = async (req, res) => {
     try {
       pdfBytes = await generateInvoicePDF(bill);
     } catch (pdfErr) {
-      // PDF generation failed — don't leave an orphaned bill with no PDF
-      // sitting in the database (it would silently block re-billing this
-      // order via the duplicate-invoice check, with nothing to show for it).
       await Bill.findByIdAndDelete(bill._id);
       console.error("Generate invoice PDF error (order):", pdfErr);
       return res.status(500).json({
@@ -399,13 +369,32 @@ exports.getBillByIdAdmin = async (req, res) => {
   }
 };
 
-// ── PATCH /api/admin/bills/:id ─────────────────────────────────
-// Edits an existing bill's charges (shipping, packaging, tax%, payment
-// mode, transaction/invoice IDs) and recomputes taxAmount + grandTotal
-// from the bill's existing (unchanged) subtotal. Regenerates the PDF so
-// the downloadable invoice always matches what's stored in the database —
-// if PDF regeneration fails, the numeric update is still kept (so the
-// admin doesn't lose their edit), but the response flags the stale PDF.
+// ── GET /api/admin/bills/:id/pdf ────────────────────────────────
+// Regenerates the invoice PDF live from the Bill document in MongoDB and
+// streams it back directly — deliberately does NOT read from disk.
+//
+// Why: uploads/ is written to at runtime but is not part of the git repo,
+// so on hosts that redeploy via a fresh git checkout (like Hostinger
+// autodeploy), any previously-saved PDF files get wiped on every deploy.
+// MongoDB data survives deploys; a saved file on disk does not. Generating
+// on-demand from the DB sidesteps that entirely and also means "View" is
+// always correct/fresh — no caching or stale-file edge cases possible.
+exports.downloadBillPdf = async (req, res) => {
+  try {
+    const bill = await Bill.findById(req.params.id);
+    if (!bill) return res.status(404).json({ success:false, message:"Bill not found" });
+
+    const pdfBytes = await generateInvoicePDF(bill);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${bill.invoiceNumber}.pdf"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(Buffer.from(pdfBytes));
+  } catch (err) {
+    console.error("Download bill PDF error:", err);
+    res.status(500).json({ success:false, message: `Failed to generate invoice PDF: ${err.message}` });
+  }
+};
+
 exports.updateBill = async (req, res) => {
   try {
     const { shippingCharge, packagingCharge, taxPercent, paymentMode, transactionId, invoiceNumber } = req.body;

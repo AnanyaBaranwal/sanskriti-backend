@@ -9,6 +9,7 @@ const {
   createBillFromOrder,
   getAllBills,
   getBillByIdAdmin,
+  downloadBillPdf,
   updateBill,
   updatePaymentStatusAdmin,
   deleteBill,
@@ -30,6 +31,7 @@ router.post("/generate-from-order", createBillFromOrder);
 router.get("/",                     getAllBills);
 
 router.get("/:id",                  getBillByIdAdmin);
+router.get("/:id/pdf",              downloadBillPdf);
 router.patch("/:id",                updateBill);
 router.patch("/:id/payment",        updatePaymentStatusAdmin);
 router.delete("/:id",               deleteBill);
