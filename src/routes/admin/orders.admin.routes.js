@@ -324,10 +324,21 @@ router.patch("/bulk-status", async (req, res) => {
     const updated   = [];
     const failed    = [];
 
+    // Same guard as the single-order endpoint — bulk actions never debit
+    // the wallet (see note above), so skipping CONFIRMED here would mean
+    // an order gets fulfilled without ever being charged, with no
+    // per-order review to catch it.
+    const FULFILLMENT_STATUSES = ["PROCESSING", "PACKED", "SHIPPED", "DELIVERED"];
+
     for (const id of orderIds) {
       try {
         const order = await Order.findById(id);
         if (!order) { failed.push({ id, reason: "Not found" }); continue; }
+
+        if (FULFILLMENT_STATUSES.includes(newStatus) && order.status === "PENDING") {
+          failed.push({ id, reason: `Order ${order.orderNumber} must be CONFIRMED first — skipped` });
+          continue;
+        }
 
         order.status = newStatus;
         order.statusHistory.push({
@@ -378,6 +389,20 @@ router.patch("/:id/status", async (req, res) => {
     if (!order) {
       await session.abortTransaction();
       return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    // Server-side safety net — the admin UI already restricts this, but a
+    // direct API call must not be able to skip CONFIRMED and go straight
+    // to a fulfillment status, since CONFIRMED is also when the seller's
+    // wallet gets debited for gallery cost. Skipping it would mean the
+    // order gets fulfilled without ever being charged.
+    const FULFILLMENT_STATUSES = ["PROCESSING", "PACKED", "SHIPPED", "DELIVERED"];
+    if (FULFILLMENT_STATUSES.includes(newStatus) && order.status === "PENDING") {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: `Order must be CONFIRMED before it can be moved to ${newStatus}.`,
+      });
     }
 
     const before = order.status;
