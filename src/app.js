@@ -105,7 +105,16 @@ app.use(cookieParser());
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads"), {
   maxAge: "7d", etag: true,
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith(".pdf")) { res.setHeader("Content-Disposition", "inline"); res.setHeader("Content-Type", "application/pdf"); }
+    if (filePath.endsWith(".pdf")) {
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("Content-Type", "application/pdf");
+      // Bills can be edited and the PDF regenerated under the SAME
+      // filename (invoiceNumber doesn't change) — so PDFs must never be
+      // cached long-term, or browsers/CDNs will keep serving stale
+      // content after an edit. "no-store" also tells Cloudflare's edge
+      // cache to bypass caching for these, not just the browser.
+      res.setHeader("Cache-Control", "no-store, must-revalidate");
+    }
   },
 }));
 

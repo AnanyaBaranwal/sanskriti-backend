@@ -84,7 +84,7 @@ exports.listOrdersForBilling = async (req, res) => {
 
     const orderIds = orders.map((o) => o._id);
     const bills = await Bill.find({ orderId: { $in: orderIds } })
-      .select("orderId invoiceNumber pdfUrl grandTotal")
+      .select("orderId invoiceNumber pdfUrl grandTotal updatedAt")
       .lean();
 
     const billMap = {};
