@@ -3,6 +3,7 @@ const router  = express.Router();
 const {
   listSellers,
   listOrdersForBilling,
+  getOrderForBilling,
   createManualBill,
   createBillFromOrder,
   getAllBills,
@@ -17,6 +18,7 @@ router.use(protect, restrictTo("admin"));
 
 router.get("/sellers",              listSellers);
 router.get("/orders",               listOrdersForBilling);
+router.get("/order/:orderId",       getOrderForBilling);
 router.get("/export",               exportBills);
 router.post("/generate",            createManualBill);
 router.post("/generate-from-order", createBillFromOrder);

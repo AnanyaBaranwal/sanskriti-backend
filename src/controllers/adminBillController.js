@@ -72,6 +72,24 @@ exports.listOrdersForBilling = async (req, res) => {
   }
 };
 
+// ── GET /api/admin/bills/order/:orderId ────────────────────────
+// Powers the "Order ID" auto-fill field on the Create Bill modal. Given an
+// order ID, returns the order (with seller populated) plus whether it
+// already has a bill, so the frontend can warn before double-billing.
+exports.getOrderForBilling = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId).populate("sellerId", "name company email phone");
+    if (!order) {
+      return res.status(404).json({ success: false, message: "No order found with that ID" });
+    }
+    const existingBill = await Bill.findOne({ orderId: order._id }).select("invoiceNumber");
+    res.json({ success: true, order, existingBill: existingBill || null });
+  } catch (err) {
+    // Invalid ObjectId format lands here too — give a clean message instead of a stack trace.
+    res.status(400).json({ success: false, message: "Invalid order ID" });
+  }
+};
+
 exports.createManualBill = async (req, res) => {
   try {
     const {
@@ -136,7 +154,18 @@ exports.createManualBill = async (req, res) => {
 
     await bill.save();
 
-    const pdfBytes = await generateInvoicePDF(bill);
+    let pdfBytes;
+    try {
+      pdfBytes = await generateInvoicePDF(bill);
+    } catch (pdfErr) {
+      await Bill.findByIdAndDelete(bill._id);
+      console.error("Generate invoice PDF error (manual):", pdfErr);
+      return res.status(500).json({
+        success: false,
+        message: `Bill was not created — invoice PDF generation failed: ${pdfErr.message}`,
+      });
+    }
+
     const billsDir = ensureBillsDir();
     const filename = `${bill.invoiceNumber}.pdf`;
     fs.writeFileSync(path.join(billsDir, filename), pdfBytes);
@@ -258,7 +287,21 @@ exports.createBillFromOrder = async (req, res) => {
 
     await bill.save();
 
-    const pdfBytes = await generateInvoicePDF(bill);
+    let pdfBytes;
+    try {
+      pdfBytes = await generateInvoicePDF(bill);
+    } catch (pdfErr) {
+      // PDF generation failed — don't leave an orphaned bill with no PDF
+      // sitting in the database (it would silently block re-billing this
+      // order via the duplicate-invoice check, with nothing to show for it).
+      await Bill.findByIdAndDelete(bill._id);
+      console.error("Generate invoice PDF error (order):", pdfErr);
+      return res.status(500).json({
+        success: false,
+        message: `Bill was not created — invoice PDF generation failed: ${pdfErr.message}`,
+      });
+    }
+
     const billsDir = ensureBillsDir();
     const filename = `${bill.invoiceNumber}.pdf`;
     fs.writeFileSync(path.join(billsDir, filename), pdfBytes);
