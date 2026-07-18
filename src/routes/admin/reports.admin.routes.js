@@ -65,9 +65,15 @@ router.get("/dashboard", async (req, res) => {
 
       Order.countDocuments({}),
 
-      // All-time platform sales = sum of what buyers paid across every order.
-      Order.aggregate([
-        { $group: { _id: null, total: { $sum: "$total" } } },
+      // All-time platform revenue — matches the Billing page's "Total
+      // Revenue" exactly: sum of every Bill's grandTotal (what's actually
+      // been invoiced, including shipping/packaging/tax), not raw order
+      // totals. Order.total would include unconfirmed/cancelled orders and
+      // doesn't reflect what was actually charged, so the two numbers used
+      // to disagree — this keeps Dashboard and Billing showing the same
+      // figure.
+      Bill.aggregate([
+        { $group: { _id: null, total: { $sum: "$grandTotal" } } },
       ]),
 
       PayoutRequest
