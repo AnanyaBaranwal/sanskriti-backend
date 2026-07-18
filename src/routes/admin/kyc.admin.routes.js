@@ -28,9 +28,6 @@ router.post("/", async (req, res) => {
       return res.status(409).json({ success: false, message: "A seller with this email already exists" });
     }
 
-    // If no password given, generate one so the admin can hand it to the seller.
-    // Seller.model.js's pre-save hook hashes passwordHash automatically — pass
-    // the plain value here, do NOT hash it manually or it'll be double-hashed.
     const generatedPassword = !password;
     const tempPassword = password || Math.random().toString(36).slice(-10);
 
@@ -40,7 +37,7 @@ router.post("/", async (req, res) => {
       phone,
       passwordHash: tempPassword,
       role: "seller",
-      status: "active", // manually added sellers are active immediately
+      status: "active",
       businessName: businessName || "",
       gstNumber: gstNumber || "",
     });
@@ -57,8 +54,6 @@ router.post("/", async (req, res) => {
       success: true,
       message: "Seller created successfully",
       seller: { ...seller.toObject(), kycStatus: "not_submitted", kyc: null },
-      // Only sent back when we generated it ourselves, so the admin can share
-      // it with the seller. Never returned if the admin set their own password.
       tempPassword: generatedPassword ? tempPassword : undefined,
     });
   } catch (err) {
@@ -74,6 +69,19 @@ router.post("/", async (req, res) => {
 });
 
 // GET /api/admin/sellers  (URL kept as-is — frontend already calls this)
+//
+// KYC status priority ordering: sellers whose KYC needs admin attention
+// float to the top — Under Review first, then Not Submitted, then
+// Rejected, and finally Approved (already decided, lowest priority to see
+// again) at the bottom. Within each group, newest-first is preserved.
+//
+// This can't be a single Mongo-level sort because kycStatus doesn't live
+// on the Seller document — it's in a separate Kyc collection — so instead
+// we fetch all matching sellers, attach each one's kycStatus, sort by
+// priority in JS, and paginate the already-sorted array. Fine at the scale
+// of a single-business admin panel; would need revisiting (e.g. a
+// denormalized kycStatus field on Seller, kept in sync on write) if the
+// seller count ever grows into the thousands+.
 router.get("/", async (req, res) => {
   try {
     const {
@@ -85,11 +93,9 @@ router.get("/", async (req, res) => {
     const baseFilter = {};
     if (includeAdmins !== "true") baseFilter.role = { $ne: "admin" };
 
-    // If filtering by kycStatus, find matching sellerIds from Kyc collection first
     let sellerIdFilter = null;
     if (kycStatus && VALID_KYC_STATUSES.includes(kycStatus)) {
       if (kycStatus === "not_submitted") {
-        // Sellers with NO Kyc doc at all, or an explicit not_submitted one
         const submitted = await Kyc.find({ status: { $ne: "not_submitted" } }).distinct("sellerId");
         sellerIdFilter = { $nin: submitted };
       } else {
@@ -107,26 +113,32 @@ router.get("/", async (req, res) => {
       ];
     }
 
-    const [sellersRaw, total] = await Promise.all([
-      Seller.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(Number(limit))
-        .lean(),
+    // Fetch every matching seller (unpaginated) so KYC-priority sorting can
+    // be applied across the whole result set before slicing a page out.
+    const [allMatching, total] = await Promise.all([
+      Seller.find(filter).sort({ createdAt: -1 }).lean(),
       Seller.countDocuments(filter),
     ]);
 
-    // Attach each seller's Kyc record (if any)
-    const sellerIds = sellersRaw.map(s => s._id);
+    const sellerIds = allMatching.map(s => s._id);
     const kycDocs = await Kyc.find({ sellerId: { $in: sellerIds } }).lean();
     const kycBySellerId = {};
     kycDocs.forEach(k => { kycBySellerId[k.sellerId.toString()] = k; });
 
-    const sellers = sellersRaw.map(s => ({
+    const withStatus = allMatching.map(s => ({
       ...s,
       kycStatus: kycBySellerId[s._id.toString()]?.status || "not_submitted",
       kyc: kycBySellerId[s._id.toString()] || null,
     }));
+
+    const PRIORITY = { under_review: 0, not_submitted: 1, rejected: 2, approved: 3 };
+    // Array.prototype.sort is stable in modern JS engines, so the
+    // newest-first order from the DB query is preserved within each
+    // priority group.
+    withStatus.sort((a, b) => (PRIORITY[a.kycStatus] ?? 99) - (PRIORITY[b.kycStatus] ?? 99));
+
+    const start = (Number(page) - 1) * Number(limit);
+    const sellers = withStatus.slice(start, start + Number(limit));
 
     // Counts for the stat cards — computed across ALL sellers (not just this page)
     const allSellerIds = await Seller.find(baseFilter).distinct("_id");
@@ -199,9 +211,6 @@ router.patch("/:id/kyc", async (req, res) => {
     kyc.reviewedBy = req.seller?.name || "Admin";
     await kyc.save();
 
-    // NOTE: Seller.kycStatus is intentionally NOT written here — KYC status
-    // lives only in the Kyc collection. Only the account-activation flag on
-    // Seller is touched, since that's account state, not KYC data.
     if (status === "approved" && seller.status === "pending") {
       seller.status = "active";
       await seller.save();
@@ -251,8 +260,6 @@ router.post("/:id/kyc/upload", uploadKYCAdmin, async (req, res) => {
       if (req.files.cancelledCheque) kyc.cancelledCheque = req.files.cancelledCheque[0].path;
     }
 
-    // Documents changed by an admin — surface for review instead of leaving
-    // a stale not_submitted/rejected status in place.
     if (["not_submitted", "rejected"].includes(kyc.status)) {
       kyc.status = "under_review";
       kyc.submittedAt = new Date();
@@ -291,7 +298,6 @@ router.delete("/:id/kyc/document/:docType", async (req, res) => {
       return res.status(400).json({ success: false, message: "No document to remove" });
     }
 
-    // Best-effort file deletion — don't fail the request if the file is already gone
     try {
       const absolute = path.resolve(kyc[docType]);
       if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
@@ -352,10 +358,6 @@ router.patch("/:id/status", async (req, res) => {
 });
 
 // PATCH /api/admin/sellers/:id/reset-password
-// Admin resets a seller's password. If no password is supplied, one is
-// generated and returned so the admin can share it with the seller.
-// Sets seller.passwordHash to plain text and calls .save() — Seller.model.js's
-// pre-save hook hashes it automatically. Never hash it manually here.
 router.patch("/:id/reset-password", async (req, res) => {
   try {
     const { password } = req.body;
@@ -370,8 +372,8 @@ router.patch("/:id/reset-password", async (req, res) => {
     const generatedPassword = !password;
     const newPassword = password || Math.random().toString(36).slice(-10);
 
-    seller.passwordHash = newPassword; // pre-save hook hashes this
-    seller.refreshToken = undefined;   // force logout on all devices
+    seller.passwordHash = newPassword;
+    seller.refreshToken = undefined;
     await seller.save();
 
     await logAction(req, {
