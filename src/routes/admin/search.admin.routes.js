@@ -9,8 +9,12 @@ const { protect, restrictTo } = require("../../middleware/auth.middleware");
 
 router.use(protect, restrictTo("admin"));
 
+// Staff/system roles should never show up in seller search results — same
+// filter used on the Sellers admin page (see seller.admin.routes.js).
+const STAFF_ROLES = ["admin", "manager", "employee"];
+
 // ── GET /api/admin/search?q=searchterm ───────────────────────
-// Searches across Orders, Bills, Clients, Products
+// Searches across Orders, Bills, Sellers, Products
 // Returns results grouped by entity type
 router.get("/", async (req, res) => {
   try {
@@ -28,7 +32,7 @@ router.get("/", async (req, res) => {
     const regex = { $regex: term, $options: "i" };
 
     // Run all searches in parallel
-    const [orders, bills, clients, products] = await Promise.all([
+    const [orders, bills, sellers, products] = await Promise.all([
 
       // Orders — search by orderNumber, buyer name, buyer phone
       Order.find({
@@ -57,8 +61,9 @@ router.get("/", async (req, res) => {
         .select("invoiceNumber buyer.name buyer.phone grandTotal paymentStatus createdAt")
         .lean(),
 
-      // Clients — search by name, phone, email
+      // Sellers — search by name, phone, email. Staff/admin accounts excluded.
       Seller.find({
+        role: { $nin: STAFF_ROLES },
         $or: [
           { name:  regex },
           { phone: regex },
@@ -84,7 +89,7 @@ router.get("/", async (req, res) => {
         .lean({ virtuals: true }),
     ]);
 
-    const totalResults = orders.length + bills.length + clients.length + products.length;
+    const totalResults = orders.length + bills.length + sellers.length + products.length;
 
     res.json({
       success: true,
@@ -93,7 +98,7 @@ router.get("/", async (req, res) => {
       results: {
         orders:   { count: orders.length,   data: orders },
         bills:    { count: bills.length,    data: bills },
-        clients:  { count: clients.length,  data: clients },
+        sellers:  { count: sellers.length,  data: sellers },
         products: { count: products.length, data: products },
       },
     });
@@ -131,21 +136,21 @@ router.get("/orders", async (req, res) => {
   }
 });
 
-// ── GET /api/admin/search/clients?q= ─────────────────────────
-router.get("/clients", async (req, res) => {
+// ── GET /api/admin/search/sellers?q= ─────────────────────────
+router.get("/sellers", async (req, res) => {
   try {
     const { q, page = 1, limit = 20 } = req.query;
     if (!q?.trim()) return res.status(400).json({ success: false, message: "Query required" });
 
     const regex  = { $regex: q.trim(), $options: "i" };
-    const filter = { $or: [{ name: regex }, { phone: regex }, { email: regex }] };
+    const filter = { role: { $nin: STAFF_ROLES }, $or: [{ name: regex }, { phone: regex }, { email: regex }] };
 
-    const [clients, total] = await Promise.all([
+    const [sellers, total] = await Promise.all([
       Seller.find(filter).sort({ totalRevenue: -1 }).skip((page-1)*limit).limit(Number(limit)).lean({ virtuals: true }),
       Seller.countDocuments(filter),
     ]);
 
-    res.json({ success: true, total, clients });
+    res.json({ success: true, total, sellers });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
   }
