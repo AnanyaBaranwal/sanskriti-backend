@@ -8,6 +8,14 @@ const LINE  = rgb(0.85, 0.85, 0.85);
 const LIGHT = rgb(0.97, 0.97, 0.97);
 const GOLD  = rgb(0.79, 0.66, 0.30);
 
+// Standard PDF fonts (Helvetica, Times, etc.) are WinAnsi-encoded and
+// physically cannot render the ₹ symbol (U+20B9) — pdf-lib throws
+// "WinAnsi cannot encode ₹" if you try. Using "Rs." instead avoids this
+// entirely with zero extra dependencies or font files. If you want the
+// actual ₹ glyph back, see the note at the bottom of this file for how to
+// embed a Unicode font instead.
+const money = (amount) => `Rs. ${Number(amount || 0).toFixed(2)}`;
+
 exports.ensureBillsDir = () => {
   const dir = path.join(process.cwd(), "uploads", "bills");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -73,8 +81,8 @@ exports.generateInvoicePDF = async (bill) => {
     text(name, 38, Y, { size: 9 });
     text(item.sku || "—", 340, Y, { size: 9 });
     text(String(item.quantity || 1), 425, Y, { size: 9 });
-    text(`₹${item.price.toFixed(2)}`, 455, Y, { size: 9 });
-    text(`₹${item.amount.toFixed(2)}`, 505, Y, { size: 9 });
+    text(money(item.price), 455, Y, { size: 9 });
+    text(money(item.amount), 505, Y, { size: 9 });
     Y -= 20;
   });
 
@@ -87,14 +95,14 @@ exports.generateInvoicePDF = async (bill) => {
     text(value, W-140, Y, { size: boldRow?11:9.5, bold: boldRow });
     Y -= boldRow ? 22 : 18;
   };
-  summaryRow("Subtotal:", `₹${bill.subtotal.toFixed(2)}`);
-  summaryRow("Shipping Charge:", `₹${(bill.shippingCharge||0).toFixed(2)}`);
-  summaryRow("Packaging Charge:", `₹${(bill.packagingCharge||0).toFixed(2)}`);
-  summaryRow(`Tax (${bill.taxPercent}%):`, `₹${(bill.taxAmount||0).toFixed(2)}`);
+  summaryRow("Subtotal:", money(bill.subtotal));
+  summaryRow("Shipping Charge:", money(bill.shippingCharge));
+  summaryRow("Packaging Charge:", money(bill.packagingCharge));
+  summaryRow(`Tax (${bill.taxPercent}%):`, money(bill.taxAmount));
   Y -= 6;
   page.drawLine({ start:{x:30,y:Y}, end:{x:W-30,y:Y}, thickness:1, color: DARK });
   Y -= 20;
-  summaryRow("TOTAL PAYABLE:", `₹${bill.grandTotal.toFixed(2)} ${bill.currency}`, true);
+  summaryRow("TOTAL PAYABLE:", `${money(bill.grandTotal)} ${bill.currency}`, true);
   Y -= 14;
 
   page.drawRectangle({ x:30, y:Y-32, width:W-60, height:34, color: DARK });
@@ -117,3 +125,30 @@ exports.generateInvoicePDF = async (bill) => {
 
   return await doc.save();
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// WANT THE ACTUAL ₹ SYMBOL INSTEAD OF "Rs."?
+//
+// Standard fonts can never render it — you'd need to embed a Unicode font:
+//
+// 1. npm install @pdf-lib/fontkit
+// 2. Download a font that includes the ₹ glyph, e.g. Noto Sans:
+//    https://fonts.google.com/noto/specimen/Noto+Sans — download the
+//    Regular and Bold .ttf files, save them somewhere like
+//    backend/src/assets/fonts/NotoSans-Regular.ttf and
+//    backend/src/assets/fonts/NotoSans-Bold.ttf
+// 3. At the top of this file:
+//      const fontkit = require("@pdf-lib/fontkit");
+// 4. Inside generateInvoicePDF, right after `PDFDocument.create()`:
+//      doc.registerFontkit(fontkit);
+//      const regularBytes = fs.readFileSync(path.join(__dirname, "../assets/fonts/NotoSans-Regular.ttf"));
+//      const boldBytes    = fs.readFileSync(path.join(__dirname, "../assets/fonts/NotoSans-Bold.ttf"));
+//      const regular = await doc.embedFont(regularBytes);
+//      const bold    = await doc.embedFont(boldBytes);
+//    (replacing the two StandardFonts.embedFont lines above)
+// 5. Change the `money()` helper back to use "₹" instead of "Rs. ".
+//
+// Once a Unicode font is embedded, ₹ (and any other Unicode character)
+// renders correctly, since the crash only ever happened with WinAnsi-only
+// standard fonts.
+// ─────────────────────────────────────────────────────────────────────────
