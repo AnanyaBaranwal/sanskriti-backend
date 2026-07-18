@@ -9,8 +9,22 @@ const { protect, restrictTo } = require("../../middleware/auth.middleware");
 
 router.use(protect, restrictTo("admin"));
 
+// Try to load PayoutRequest — if the model/path is named differently in
+// your project, this route degrades gracefully (pendingPayouts stays 0)
+// instead of crashing the whole dashboard.
+let PayoutRequest = null;
+try {
+  PayoutRequest = require("../../models/PayoutRequest.model");
+} catch (e) {
+  console.warn("[reports/dashboard] PayoutRequest model not found — pendingPayouts will report 0");
+}
+
 // ── GET /api/admin/reports/dashboard ─────────────────────────
-// Main dashboard stats card data
+// Main dashboard stats card data.
+//
+// IMPORTANT: this response is wrapped as { success, data: {...} } — the
+// frontend must read res.data.data, not res.data, or every field will
+// silently be undefined.
 router.get("/dashboard", async (req, res) => {
   try {
     const todayStart = new Date();
@@ -18,17 +32,52 @@ router.get("/dashboard", async (req, res) => {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
+    const startOfWeek = new Date();
+    startOfWeek.setDate(startOfWeek.getDate() - 7);
+
     const [
+      // ── All-time platform totals — what the stat cards actually show ──
+      totalSellers,
+      totalOrders,
+      totalRevenueAgg,
+      pendingPayoutsCount,
+      sellersThisWeek,
+      ordersToday,
+
+      // ── Existing "today" stats — kept for anything else using them ──
       todayOrders,
       todayRevenue,
       pendingOrdersCount,
       pendingPaymentsData,
       lowStockCount,
       recentActivity,
-      topClients,
-      topProducts,
       weeklyRevenue,
+
+      // ── Top sellers by GMV through the platform (all-time orders) ──
+      topSellersAgg,
+
+      // ── Top products by units sold, aggregated straight from order items ──
+      topProductsAgg,
     ] = await Promise.all([
+      // Real sellers only — never counts staff/admin accounts (see
+      // seller.admin.routes.js for why this filter exists).
+      Seller.countDocuments({ role: { $nin: ["admin", "manager", "employee"] } }),
+
+      Order.countDocuments({}),
+
+      // All-time platform sales = sum of what buyers paid across every order.
+      Order.aggregate([
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]),
+
+      PayoutRequest
+        ? PayoutRequest.countDocuments({ status: { $in: ["pending", "PENDING", "Pending"] } })
+        : Promise.resolve(0),
+
+      Seller.countDocuments({ role: { $nin: ["admin", "manager", "employee"] }, createdAt: { $gte: startOfWeek } }),
+
+      Order.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
+
       // Today's order count
       Order.countDocuments({ createdAt: { $gte: todayStart, $lte: todayEnd } }),
 
@@ -54,25 +103,11 @@ router.get("/dashboard", async (req, res) => {
         $expr: { $lte: ["$stock", "$reorderLevel"] },
       }),
 
-      // Recent 10 audit log entries — use Orders as activity proxy if no audit log yet
+      // Recent 10 orders as an activity proxy
       Order.find({})
         .sort({ updatedAt: -1 })
         .limit(10)
         .select("orderNumber status buyer.name total updatedAt")
-        .lean(),
-
-      // Top 5 clients by revenue
-      Seller.find({})
-        .sort({ totalRevenue: -1 })
-        .limit(5)
-        .select("name phone totalOrders totalRevenue pendingPayments")
-        .lean(),
-
-      // Top 5 products by totalSold
-      Product.find({ isActive: true })
-        .sort({ totalSold: -1 })
-        .limit(5)
-        .select("name sku totalSold stock sellingPrice")
         .lean(),
 
       // Last 7 days revenue for sparkline
@@ -92,11 +127,73 @@ router.get("/dashboard", async (req, res) => {
         },
         { $sort: { _id: 1 } },
       ]),
+
+      // Group orders by seller, sum what buyers paid (order.total) as GMV,
+      // count as number of orders — this is "top sellers" from the
+      // platform's perspective, not a cached/stale field on Seller.
+      Order.aggregate([
+        { $match: { sellerId: { $ne: null } } },
+        {
+          $group: {
+            _id: "$sellerId",
+            revenue: { $sum: "$total" },
+            orders:  { $sum: 1 },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: 5 },
+      ]),
+
+      // Group order line items by product name, sum quantity + line total —
+      // reflects what's actually been sold through orders, rather than a
+      // separate/possibly-unrelated Product catalog's cached totalSold.
+      Order.aggregate([
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.name",
+            sold:    { $sum: "$items.quantity" },
+            revenue: { $sum: "$items.total" },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: 5 },
+      ]),
     ]);
+
+    // Attach seller names to the top-sellers aggregation (a $lookup would
+    // also work, but a small manual join keeps this readable for 5 rows).
+    const topSellerIds = topSellersAgg.map(s => s._id).filter(Boolean);
+    const sellerDocs = await Seller.find({ _id: { $in: topSellerIds } }).select("name company").lean();
+    const sellerNameById = {};
+    sellerDocs.forEach(s => { sellerNameById[String(s._id)] = s.company || s.name; });
+
+    const topSellers = topSellersAgg.map(s => ({
+      name: sellerNameById[String(s._id)] || "Unknown Seller",
+      orders: s.orders,
+      revenue: s.revenue,
+    }));
+
+    const topProducts = topProductsAgg.map(p => ({
+      name: p._id || "Unnamed product",
+      sold: p.sold,
+      revenue: p.revenue,
+    }));
 
     res.json({
       success: true,
       data: {
+        // Fields the dashboard stat cards actually read:
+        totalSellers,
+        totalOrders,
+        totalRevenue: totalRevenueAgg[0]?.total || 0,
+        pendingPayouts: pendingPayoutsCount,
+        sellersThisWeek,
+        ordersToday,
+        topSellers,
+        topProducts,
+
+        // Existing fields — kept in case anything else consumes them:
         todayOrders,
         todayRevenue:      todayRevenue[0]?.total       || 0,
         pendingOrders:     pendingOrdersCount,
@@ -104,8 +201,6 @@ router.get("/dashboard", async (req, res) => {
         pendingBillsCount: pendingPaymentsData[0]?.count || 0,
         lowStockCount,
         recentActivity,
-        topClients,
-        topProducts,
         weeklyRevenue,
       },
     });
@@ -160,7 +255,6 @@ router.get("/sales", async (req, res) => {
       ]),
     ]);
 
-    // Merge revenue + order counts by date key
     const orderMap = {};
     orderCounts.forEach(o => { orderMap[o._id] = o.orders; });
 
@@ -172,7 +266,6 @@ router.get("/sales", async (req, res) => {
       orders:  orderMap[d._id] || 0,
     }));
 
-    // Growth vs previous period
     const totalRevenue = merged.reduce((s, d) => s + d.revenue, 0);
     const totalOrders  = merged.reduce((s, d) => s + d.orders, 0);
 
@@ -190,7 +283,6 @@ router.get("/top-products", async (req, res) => {
     const from  = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const to    = req.query.to   ? new Date(req.query.to)   : new Date();
 
-    // Aggregate from bills items in date range
     const topProducts = await Bill.aggregate([
       { $match: { createdAt: { $gte: from, $lte: to } } },
       { $unwind: "$items" },
@@ -286,7 +378,6 @@ router.get("/gst-summary", async (req, res) => {
       },
     ]);
 
-    // By state breakdown
     const byState = await Bill.aggregate([
       { $match: matchStage },
       {
@@ -334,11 +425,10 @@ router.get("/gst-summary", async (req, res) => {
 router.get("/outstanding-payments", async (req, res) => {
   try {
     const bills = await Bill.find({ paymentStatus: "UNPAID" })
-      .sort({ createdAt: 1 }) // oldest first = most overdue
+      .sort({ createdAt: 1 })
       .select("invoiceNumber buyer grandTotal createdAt seller.businessName")
       .lean();
 
-    // Add overdue days
     const now = Date.now();
     const enriched = bills.map(b => ({
       ...b,
@@ -365,7 +455,6 @@ router.get("/client-revenue/:clientId", async (req, res) => {
     const client = await Seller.findById(req.params.clientId).lean({ virtuals: true });
     if (!client) return res.status(404).json({ success: false, message: "Seller not found" });
 
-    // Monthly revenue for this client
     const monthlyRevenue = await Bill.aggregate([
       { $match: { "buyer.phone": client.phone } },
       {
@@ -390,7 +479,6 @@ router.get("/client-revenue/:clientId", async (req, res) => {
 });
 
 // ── GET /api/admin/reports/sales-trend?months=6 ──────────────
-// Growth % vs previous period for trend analysis
 router.get("/sales-trend", async (req, res) => {
   try {
     const months = parseInt(req.query.months) || 6;
@@ -412,7 +500,6 @@ router.get("/sales-trend", async (req, res) => {
       { $sort: { _id: 1 } },
     ]);
 
-    // Add growth % vs previous month
     const enriched = data.map((d, i) => {
       const prev   = data[i - 1];
       const growth = prev && prev.revenue > 0
