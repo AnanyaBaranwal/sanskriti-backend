@@ -7,6 +7,40 @@ const Order   = require("../models/Order.model");
 const { generateInvoicePDF, ensureBillsDir } = require("../utils/invoicePdf");
 const { logAction } = require("../utils/audit");
 
+// ── GET /api/admin/bills/stats ──────────────────────────────────
+// Powers the stat cards on the Bills page: total revenue, total bills,
+// this month's revenue, this month's bill count. Always computed across
+// ALL bills — not just the current page — since these are summary totals.
+exports.getBillingStats = async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [totalAgg, monthAgg, totalBills, monthBills] = await Promise.all([
+      Bill.aggregate([{ $group: { _id: null, revenue: { $sum: "$grandTotal" } } }]),
+      Bill.aggregate([
+        { $match: { createdAt: { $gte: startOfMonth } } },
+        { $group: { _id: null, revenue: { $sum: "$grandTotal" } } },
+      ]),
+      Bill.countDocuments({}),
+      Bill.countDocuments({ createdAt: { $gte: startOfMonth } }),
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        totalRevenue: totalAgg[0]?.revenue || 0,
+        totalBills,
+        monthRevenue: monthAgg[0]?.revenue || 0,
+        monthBills,
+      },
+    });
+  } catch (err) {
+    console.error("Get billing stats error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.listSellers = async (req, res) => {
   try {
     const clients = await Seller.find({ role: "seller" })
@@ -361,6 +395,84 @@ exports.getBillByIdAdmin = async (req, res) => {
     if (!bill) return res.status(404).json({ success:false, message:"Bill not found" });
     res.json({ success:true, bill });
   } catch (err) {
+    res.status(500).json({ success:false, message: err.message });
+  }
+};
+
+// ── PATCH /api/admin/bills/:id ─────────────────────────────────
+// Edits an existing bill's charges (shipping, packaging, tax%, payment
+// mode, transaction/invoice IDs) and recomputes taxAmount + grandTotal
+// from the bill's existing (unchanged) subtotal. Regenerates the PDF so
+// the downloadable invoice always matches what's stored in the database —
+// if PDF regeneration fails, the numeric update is still kept (so the
+// admin doesn't lose their edit), but the response flags the stale PDF.
+exports.updateBill = async (req, res) => {
+  try {
+    const { shippingCharge, packagingCharge, taxPercent, paymentMode, transactionId, invoiceNumber } = req.body;
+
+    const bill = await Bill.findById(req.params.id);
+    if (!bill) return res.status(404).json({ success:false, message:"Bill not found" });
+
+    if (transactionId && transactionId !== bill.transactionId) {
+      const dupe = await Bill.findOne({ transactionId, _id: { $ne: bill._id } });
+      if (dupe) return res.status(400).json({ success:false, message:"Transaction ID already exists" });
+    }
+    if (invoiceNumber && invoiceNumber !== bill.invoiceNumber) {
+      const dupe = await Bill.findOne({ invoiceNumber, _id: { $ne: bill._id } });
+      if (dupe) return res.status(400).json({ success:false, message:"Invoice number already exists" });
+    }
+
+    const ship   = shippingCharge  !== undefined ? (Number(shippingCharge)  || 0) : bill.shippingCharge;
+    const pack   = packagingCharge !== undefined ? (Number(packagingCharge) || 0) : bill.packagingCharge;
+    const taxPct = taxPercent      !== undefined ? (Number(taxPercent)      || 0) : bill.taxPercent;
+    const taxAmount  = Math.round(((bill.subtotal + ship + pack) * taxPct) / 100);
+    const grandTotal = bill.subtotal + ship + pack + taxAmount;
+
+    const before = bill.toObject();
+
+    bill.shippingCharge  = ship;
+    bill.packagingCharge = pack;
+    bill.taxPercent      = taxPct;
+    bill.taxAmount        = taxAmount;
+    bill.grandTotal       = grandTotal;
+    if (paymentMode   !== undefined) bill.paymentMode   = paymentMode;
+    if (transactionId)               bill.transactionId = transactionId;
+    if (invoiceNumber)               bill.invoiceNumber = invoiceNumber;
+
+    await bill.save();
+
+    let pdfStale = false;
+    try {
+      const pdfBytes = await generateInvoicePDF(bill);
+      const billsDir = ensureBillsDir();
+      const filename = `${bill.invoiceNumber}.pdf`;
+      fs.writeFileSync(path.join(billsDir, filename), pdfBytes);
+      bill.pdfUrl = `/uploads/bills/${filename}`;
+      await bill.save();
+    } catch (pdfErr) {
+      console.error("Regenerate invoice PDF error:", pdfErr);
+      pdfStale = true;
+    }
+
+    await logAction(req, {
+      action: "UPDATE",
+      entity: "Bill",
+      entityId: bill._id,
+      entityRef: bill.invoiceNumber,
+      description: `Invoice ${bill.invoiceNumber} charges updated`,
+      before,
+      after: bill.toObject(),
+    });
+
+    res.json({
+      success: true,
+      message: pdfStale
+        ? "Bill updated, but the invoice PDF could not be regenerated — the downloadable file may be out of date."
+        : "Bill updated successfully",
+      bill,
+    });
+  } catch (err) {
+    console.error("Update bill error:", err);
     res.status(500).json({ success:false, message: err.message });
   }
 };
