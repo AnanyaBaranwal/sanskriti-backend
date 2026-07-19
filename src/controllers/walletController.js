@@ -3,20 +3,45 @@ const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
 const Seller = require("../models/Seller.model");
 
-// ─── Helper: get or create seller wallet ───────────────────────────────────────
-const getOrCreateWallet = async (sellerId) => {
-  let wallet = await Wallet.findOne({ sellerId });
+// ─────────────────────────────────────────────────────────────────────────────
+// Seller.walletBalance is now the SINGLE SOURCE OF TRUTH for what a seller's
+// wallet balance actually is. Every read (getBalance, getSummary) comes from
+// there, and every write (credit, debit, order-confirmation debits, Razorpay
+// top-up credits) updates it directly.
+//
+// The Wallet collection is kept only because Transaction documents have a
+// required walletId foreign key — getOrCreateWallet still ensures one exists
+// so transaction history keeps working, and its own .balance field is kept
+// in sync as a mirror for backward compatibility with anything else that
+// might still read it, but it is NOT what getBalance/getSummary return.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Helper: get or create seller wallet (for Transaction.walletId linkage only) ──
+const getOrCreateWallet = async (sellerId, session) => {
+  let wallet = await Wallet.findOne({ sellerId }).session(session || null);
   if (!wallet) {
-    wallet = await Wallet.create({ sellerId });
+    const created = await Wallet.create([{ sellerId }], session ? { session } : undefined);
+    wallet = Array.isArray(created) ? created[0] : created;
   }
   return wallet;
 };
 
 // ─── GET /api/wallet/balance ────────────────────────────────────────────────────
-// SELLER-SIDE
+// SELLER-SIDE — reads Seller.walletBalance directly.
 exports.getBalance = async (req, res) => {
   try {
-    const wallet = await getOrCreateWallet(req.seller.id);
+    const seller = await Seller.findById(req.seller.id).select("walletBalance").lean();
+    const balance = seller?.walletBalance ?? 0;
+
+    // totalCredited/totalDebited aren't stored fields on Seller — computed
+    // live from the Transaction ledger so they stay accurate without
+    // needing a schema change.
+    const totals = await Transaction.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(req.seller.id), walletOwnerType: "SELLER", status: "COMPLETED" } },
+      { $group: { _id: "$type", total: { $sum: "$amount" } } },
+    ]);
+    const totalCredited = totals.find(t => t._id === "CREDIT")?.total || 0;
+    const totalDebited = totals.find(t => t._id === "DEBIT")?.total || 0;
 
     const recentTransactions = await Transaction.find({
       sellerId: req.seller.id,
@@ -27,12 +52,15 @@ exports.getBalance = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      // Also send balance at top level — several existing frontend pages
+      // read res.data.balance directly rather than res.data.wallet.balance.
+      balance,
       wallet: {
-        balance: wallet.balance,
-        currency: wallet.currency,
-        totalCredited: wallet.totalCredited,
-        totalDebited: wallet.totalDebited,
-        isActive: wallet.isActive,
+        balance,
+        currency: "INR",
+        totalCredited,
+        totalDebited,
+        isActive: true,
       },
       recentTransactions,
     });
@@ -43,7 +71,7 @@ exports.getBalance = async (req, res) => {
 };
 
 // ─── GET /api/wallet/transactions ───────────────────────────────────────────────
-// SELLER-SIDE
+// SELLER-SIDE — unchanged, Transaction history is unaffected by this change.
 exports.getTransactions = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -78,7 +106,7 @@ exports.getTransactions = async (req, res) => {
 };
 
 // ─── POST /api/wallet/credit ────────────────────────────────────────────────────
-// SELLER-SIDE (e.g. top-up)
+// SELLER-SIDE (e.g. manual top-up via this endpoint, if used directly)
 exports.credit = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -95,15 +123,20 @@ exports.credit = async (req, res) => {
       return res.status(400).json({ success: false, message: "Description is required" });
     }
 
-    let wallet = await Wallet.findOne({ sellerId: req.seller.id }).session(session);
-    if (!wallet) {
-      const created = await Wallet.create([{ sellerId: req.seller.id }], { session });
-      wallet = created[0];
-    }
+    const wallet = await getOrCreateWallet(req.seller.id, session);
 
-    const balanceBefore = wallet.balance;
+    const sellerBefore = await Seller.findById(req.seller.id).select("walletBalance").session(session);
+    const balanceBefore = sellerBefore?.walletBalance ?? 0;
     const balanceAfter = balanceBefore + Number(amount);
 
+    // Seller.walletBalance is authoritative.
+    await Seller.findByIdAndUpdate(
+      req.seller.id,
+      { $inc: { walletBalance: Number(amount) } },
+      { session }
+    );
+    // Mirror onto the Wallet doc too, purely so anything still reading
+    // Wallet.balance elsewhere doesn't see stale data.
     await Wallet.findByIdAndUpdate(
       wallet._id,
       { $inc: { balance: Number(amount), totalCredited: Number(amount) } },
@@ -164,24 +197,27 @@ exports.debit = async (req, res) => {
       return res.status(400).json({ success: false, message: "Description is required" });
     }
 
-    const wallet = await Wallet.findOne({ sellerId: req.seller.id }).session(session);
-    if (!wallet) {
-      await session.abortTransaction();
-      return res.status(404).json({ success: false, message: "Wallet not found" });
-    }
+    const wallet = await getOrCreateWallet(req.seller.id, session);
 
-    if (wallet.balance < Number(amount)) {
+    const sellerBefore = await Seller.findById(req.seller.id).select("walletBalance").session(session);
+    const balanceBefore = sellerBefore?.walletBalance ?? 0;
+
+    if (balanceBefore < Number(amount)) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: `Insufficient balance. Available: ₹${wallet.balance}`,
-        availableBalance: wallet.balance,
+        message: `Insufficient balance. Available: ₹${balanceBefore}`,
+        availableBalance: balanceBefore,
       });
     }
 
-    const balanceBefore = wallet.balance;
     const balanceAfter = balanceBefore - Number(amount);
 
+    await Seller.findByIdAndUpdate(
+      req.seller.id,
+      { $inc: { walletBalance: -Number(amount) } },
+      { session }
+    );
     await Wallet.findByIdAndUpdate(
       wallet._id,
       { $inc: { balance: -Number(amount), totalDebited: Number(amount) } },
@@ -228,39 +264,42 @@ exports.debit = async (req, res) => {
 // SELLER-SIDE
 exports.getSummary = async (req, res) => {
   try {
-    const wallet = await getOrCreateWallet(req.seller.id);
+    const seller = await Seller.findById(req.seller.id).select("walletBalance").lean();
+    const balance = seller?.walletBalance ?? 0;
 
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const monthlyStats = await Transaction.aggregate([
-      {
-        $match: {
-          sellerId: new mongoose.Types.ObjectId(req.seller.id),
-          walletOwnerType: "SELLER",
-          createdAt: { $gte: startOfMonth },
-          status: "COMPLETED",
+    const [allTimeStats, monthlyStats] = await Promise.all([
+      Transaction.aggregate([
+        { $match: { sellerId: new mongoose.Types.ObjectId(req.seller.id), walletOwnerType: "SELLER", status: "COMPLETED" } },
+        { $group: { _id: "$type", total: { $sum: "$amount" } } },
+      ]),
+      Transaction.aggregate([
+        {
+          $match: {
+            sellerId: new mongoose.Types.ObjectId(req.seller.id),
+            walletOwnerType: "SELLER",
+            createdAt: { $gte: startOfMonth },
+            status: "COMPLETED",
+          },
         },
-      },
-      {
-        $group: {
-          _id: "$type",
-          total: { $sum: "$amount" },
-          count: { $sum: 1 },
-        },
-      },
+        { $group: { _id: "$type", total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ]),
     ]);
 
+    const totalCredited = allTimeStats.find((s) => s._id === "CREDIT")?.total || 0;
+    const totalDebited = allTimeStats.find((s) => s._id === "DEBIT")?.total || 0;
     const monthlyCredited = monthlyStats.find((s) => s._id === "CREDIT")?.total || 0;
     const monthlyDebited = monthlyStats.find((s) => s._id === "DEBIT")?.total || 0;
 
     res.status(200).json({
       success: true,
       summary: {
-        currentBalance: wallet.balance,
-        totalCredited: wallet.totalCredited,
-        totalDebited: wallet.totalDebited,
+        currentBalance: balance,
+        totalCredited,
+        totalDebited,
         thisMonth: {
           credited: monthlyCredited,
           debited: monthlyDebited,
@@ -275,10 +314,10 @@ exports.getSummary = async (req, res) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// CLIENT WALLET — NEW. Admin-only, since clients don't log in themselves.
+// CLIENT WALLET — legacy, from before Customers were split out of Seller.
+// Left unchanged/unused here; flagged separately for cleanup.
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ─── GET /api/clients/:clientId/wallet ──────────────────────────────────────────
 exports.getClientWallet = async (req, res) => {
   try {
     const { clientId } = req.params;
@@ -314,7 +353,6 @@ exports.getClientWallet = async (req, res) => {
   }
 };
 
-// ─── GET /api/orders/:orderId/refund-transaction ────────────────────────────────
 exports.getRefundTransactionByOrder = async (req, res) => {
   try {
     const { orderId } = req.params;

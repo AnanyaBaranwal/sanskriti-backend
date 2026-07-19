@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
+const Seller = require("../models/Seller.model");
 const mongoose = require("mongoose");
 
 const razorpay = new Razorpay({
@@ -41,6 +42,9 @@ exports.createOrder = async (req, res) => {
 };
 
 // ─── POST /api/payments/verify ────────────────────────────────────────────────
+// Seller.walletBalance is the authoritative wallet balance (see
+// walletController.js) — this credits it directly, in the same transaction
+// as the Wallet-collection mirror update, so the two never drift apart.
 exports.verifyPayment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -76,9 +80,18 @@ exports.verifyPayment = async (req, res) => {
     }
 
     const amountInRupees = Number(amount) / 100;
-    const balanceBefore = wallet.balance;
+
+    const sellerBefore = await Seller.findById(req.seller.id).select("walletBalance").session(session);
+    const balanceBefore = sellerBefore?.walletBalance ?? 0;
     const balanceAfter = balanceBefore + amountInRupees;
 
+    // Authoritative balance update.
+    await Seller.findByIdAndUpdate(
+      req.seller.id,
+      { $inc: { walletBalance: amountInRupees } },
+      { session }
+    );
+    // Mirror onto the Wallet doc so nothing else reading Wallet.balance is stale.
     await Wallet.findByIdAndUpdate(
       wallet._id,
       { $inc: { balance: amountInRupees, totalCredited: amountInRupees } },
@@ -88,6 +101,7 @@ exports.verifyPayment = async (req, res) => {
     await Transaction.create(
       [{
         walletId: wallet._id,
+        walletOwnerType: "SELLER",
         sellerId: req.seller.id,
         type: "CREDIT",
         amount: amountInRupees,
@@ -166,9 +180,15 @@ exports.webhook = async (req, res) => {
         wallet = created[0];
       }
 
-      const balanceBefore = wallet.balance;
+      const sellerBefore = await Seller.findById(sellerId).select("walletBalance").session(session);
+      const balanceBefore = sellerBefore?.walletBalance ?? 0;
       const balanceAfter = balanceBefore + amountInRupees;
 
+      await Seller.findByIdAndUpdate(
+        sellerId,
+        { $inc: { walletBalance: amountInRupees } },
+        { session }
+      );
       await Wallet.findByIdAndUpdate(
         wallet._id,
         { $inc: { balance: amountInRupees, totalCredited: amountInRupees } },
@@ -178,6 +198,7 @@ exports.webhook = async (req, res) => {
       await Transaction.create(
         [{
           walletId: wallet._id,
+          walletOwnerType: "SELLER",
           sellerId,
           type: "CREDIT",
           amount: amountInRupees,
