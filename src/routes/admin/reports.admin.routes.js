@@ -5,9 +5,9 @@ const Order  = require("../../models/Order.model");
 const Bill   = require("../../models/Bill.model");
 const Seller = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, requireModule("reports"));
 
 // Try to load PayoutRequest — if the model/path is named differently in
 // your project, this route degrades gracefully (pendingPayouts stays 0)

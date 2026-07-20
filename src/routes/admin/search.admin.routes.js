@@ -5,9 +5,9 @@ const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
 const Seller  = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, requireModule("search"));
 
 // Staff/system roles should never show up in seller search results — same
 // filter used on the Sellers admin page (see seller.admin.routes.js).

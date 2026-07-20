@@ -2,18 +2,17 @@ const express = require("express");
 const router = express.Router();
 
 const Seller = require("../../models/Seller.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, requireModule, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 const { escapeRegex } = require("../../utils/escapeRegex");
 
-// All seller admin routes require login + admin role
-router.use(protect, restrictTo("admin"));
+// "Clients" module — accessible to admin, manager, and employee per role table
+router.use(protectStaff, requireModule("clients"));
 
 // Staff/system roles that should NEVER show up in Seller Management —
 // this page is for managing actual sellers, not admin/staff accounts.
-// $nin also correctly includes documents where `role` is missing entirely
-// (treated as "not in" the excluded list), so real sellers without a role
-// field set still show up as expected.
+// Now mostly redundant since staff live in a separate `Staff` collection,
+// but kept as a safety net for any legacy Seller documents.
 const STAFF_ROLES = ["admin", "manager", "employee"];
 const excludeStaff = { role: { $nin: STAFF_ROLES } };
 
@@ -161,7 +160,8 @@ router.patch("/:id/status", async (req, res) => {
 });
 
 // ── DELETE /api/admin/sellers/:id ──────────────────────────────
-router.delete("/:id", async (req, res) => {
+// Delete stays admin-only, even though view/edit is open to manager+employee.
+router.delete("/:id", restrictStaffTo("admin"), async (req, res) => {
   try {
     const seller = await Seller.findOneAndDelete({ _id: req.params.id, ...excludeStaff });
     if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });

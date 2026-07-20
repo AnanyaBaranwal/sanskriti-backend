@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const noteSchema = new mongoose.Schema(
   {
     text: { type: String, required: true, trim: true },
-    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Seller" },
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Staff" },
     addedByName: { type: String },
   },
   { timestamps: true }
@@ -40,7 +40,7 @@ const sellerSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["seller", "admin"],
+      enum: ["seller"],
       default: "seller",
     },
     status: {

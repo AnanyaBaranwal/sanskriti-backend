@@ -1,7 +1,11 @@
 const AuditLog = require("../models/AuditLog.model");
 
 /**
- * Log any admin/seller action to the audit trail.
+ * Log any admin/staff/seller action to the audit trail.
+ *
+ * Works for both auth systems:
+ *  - Staff (admin panel) routes set req.staff via protectStaff middleware
+ *  - Seller (seller dashboard) routes set req.seller via protect middleware
  *
  * Usage examples:
  *
@@ -25,13 +29,17 @@ const AuditLog = require("../models/AuditLog.model");
  */
 const logAction = async (req, { action, entity, entityId = null, entityRef = null, description, before = null, after = null }) => {
   try {
-    // req.seller is set by the protect middleware
-    const seller = req.seller || {};
+    // Prefer req.staff (admin panel) if present, fall back to req.seller
+    // (seller dashboard). At most one of these will be set on any given
+    // request, depending on which auth middleware ran.
+    const actor = req.staff || req.seller || {};
+    const actorModel = req.staff ? "Staff" : "Seller";
 
     await AuditLog.create({
-      performedBy:     seller.id,
-      performedByName: seller.name  || null,
-      performedByRole: seller.role  || null,
+      performedBy:      actor.id,
+      performedByModel: actorModel,
+      performedByName:  actor.name || null,
+      performedByRole:  actor.role || null,
       action,
       entity,
       entityId:    entityId  || null,

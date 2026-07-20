@@ -1,8 +1,5 @@
-// src/controllers/adminAuthController.js
 const jwt = require("jsonwebtoken");
-const Seller = require("../models/Seller.model");
-
-const ADMIN_ROLES = ["admin", "manager", "employee"]; // staff roles allowed into the Admin Panel
+const Staff = require("../models/Staff.model");
 
 const generateAccessToken = (id, role) =>
   jwt.sign({ id, role }, process.env.JWT_SECRET, {
@@ -15,9 +12,8 @@ const generateRefreshToken = (id) =>
   });
 
 // ── POST /api/auth/admin-login ────────────────────────────────
-// Same credential check as the regular seller login, PLUS a role gate.
-// A seller-role account gets a clean 403 here and never receives a token
-// for the admin panel.
+// Checks credentials against the Staff collection only. Sellers can
+// never authenticate here — they simply won't exist in this collection.
 exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -26,7 +22,7 @@ exports.adminLogin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Email and password are required" });
     }
 
-    const account = await Seller.findOne({ email: email.toLowerCase() }).select(
+    const account = await Staff.findOne({ email: email.toLowerCase() }).select(
       "+passwordHash +refreshToken"
     );
 
@@ -43,18 +39,10 @@ exports.adminLogin = async (req, res) => {
       return res.status(403).json({ success: false, message: "Your account has been suspended. Contact support." });
     }
 
-    // ── Reject anything that isn't staff ─────────────
-    if (!ADMIN_ROLES.includes(account.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "This account does not have access to the Admin Panel.",
-      });
-    }
-
     const accessToken = generateAccessToken(account._id, account.role);
     const refreshToken = generateRefreshToken(account._id);
 
-    await Seller.findByIdAndUpdate(account._id, { refreshToken });
+    await Staff.findByIdAndUpdate(account._id, { refreshToken });
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -66,7 +54,7 @@ exports.adminLogin = async (req, res) => {
     res.status(200).json({
       success: true,
       accessToken,
-      seller: account,
+      staff: account,
     });
   } catch (error) {
     console.error("Admin login error:", error);

@@ -10,11 +10,11 @@ const Order       = require("../../models/Order.model");
 const Seller      = require("../../models/Seller.model");
 const Wallet      = require("../../models/Wallet.model");
 const Transaction = require("../../models/Transaction.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 const { findOrCreateCustomer, refreshCustomerStats } = require("../../utils/clientStats");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, requireModule("orders"));
 
 // ── Multer — memory storage for Excel uploads ─────────────────
 const upload = multer({
@@ -52,9 +52,6 @@ const flagRefundPending = (order) => {
 };
 
 // ── GET /api/admin/orders ─────────────────────────────────────
-// All orders across all sellers (admin view).
-// Populates BOTH sellerId (who sold it) and customerId (who bought it),
-// so the admin UI can show seller + buyer info side by side per row.
 router.get("/", async (req, res) => {
   try {
     const {
@@ -196,6 +193,15 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
     return res.status(400).json({ success: false, message: "Excel file is required" });
   }
 
+  const { sellerId } = req.body;
+  if (!sellerId) {
+    return res.status(400).json({ success: false, message: "sellerId is required — select which seller these orders belong to" });
+  }
+  const sellerExists = await Seller.exists({ _id: sellerId });
+  if (!sellerExists) {
+    return res.status(400).json({ success: false, message: "Invalid sellerId" });
+  }
+
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(req.file.buffer);
   const ws = wb.worksheets[0];
@@ -266,7 +272,7 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
       const { subtotal, taxAmount, discountAmount, total } = calculateTotals(items, taxPercent, discount);
 
       const order = await Order.create({
-        sellerId: req.seller.id,
+        sellerId,
         buyer: {
           name: buyerName, phone: buyerPhone, email: buyerEmail || null,
           address: { city, state, pincode },
@@ -278,8 +284,7 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         statusHistory: [{ status: "PENDING", note: "Created via bulk upload" }],
       });
 
-      // Link to customer — never Seller.
-      const customerId = await findOrCreateCustomer({ sellerId: req.seller.id, buyer: order.buyer });
+      const customerId = await findOrCreateCustomer({ sellerId, buyer: order.buyer });
       if (customerId) {
         await Order.findByIdAndUpdate(order._id, { customerId });
         await refreshCustomerStats(customerId);
@@ -324,10 +329,6 @@ router.patch("/bulk-status", async (req, res) => {
     const updated   = [];
     const failed    = [];
 
-    // Same guard as the single-order endpoint — bulk actions never debit
-    // the wallet (see note above), so skipping CONFIRMED here would mean
-    // an order gets fulfilled without ever being charged, with no
-    // per-order review to catch it.
     const FULFILLMENT_STATUSES = ["PROCESSING", "PACKED", "SHIPPED", "DELIVERED"];
 
     for (const id of orderIds) {
@@ -391,11 +392,6 @@ router.patch("/:id/status", async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // Server-side safety net — the admin UI already restricts this, but a
-    // direct API call must not be able to skip CONFIRMED and go straight
-    // to a fulfillment status, since CONFIRMED is also when the seller's
-    // wallet gets debited for gallery cost. Skipping it would mean the
-    // order gets fulfilled without ever being charged.
     const FULFILLMENT_STATUSES = ["PROCESSING", "PACKED", "SHIPPED", "DELIVERED"];
     if (FULFILLMENT_STATUSES.includes(newStatus) && order.status === "PENDING") {
       await session.abortTransaction();

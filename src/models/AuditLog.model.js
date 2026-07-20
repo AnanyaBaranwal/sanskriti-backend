@@ -2,11 +2,18 @@ const mongoose = require("mongoose");
 
 const auditLogSchema = new mongoose.Schema(
   {
-    // Who did it
+    // Who did it — can be a Staff (admin panel) or Seller (seller dashboard)
+    // account, so the reference is dynamic via performedByModel.
     performedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Seller",
+      refPath: "performedByModel",
       required: true,
+    },
+    performedByModel: {
+      type: String,
+      enum: ["Staff", "Seller"],
+      required: true,
+      default: "Staff",
     },
     performedByName: { type: String },   // snapshot so it survives account deletion
     performedByRole: { type: String },
@@ -22,7 +29,8 @@ const auditLogSchema = new mongoose.Schema(
     entity: {
       type: String,
       // NOTE: "GalleryProduct" and "GalleryOrder" added for the seller Gallery feature.
-      enum: ["Order", "Bill", "Seller", "Product", "Seller", "Payout", "Wallet", "GalleryProduct", "GalleryOrder", "System"],
+      // "Staff" added for admin/manager/employee account management actions.
+      enum: ["Order", "Bill", "Seller", "Staff", "Product", "Payout", "Wallet", "GalleryProduct", "GalleryOrder", "System"],
       required: true,
     },
     entityId: {

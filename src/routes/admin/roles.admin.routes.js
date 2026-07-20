@@ -1,27 +1,20 @@
 // ═══════════════════════════════════════════════════════════════
-// FILE 2: src/routes/admin/roles.admin.routes.js
-// Manager / Employee role management
+// FILE: src/routes/admin/roles.admin.routes.js
+// Manager / Employee role management — Admin only
 // ═══════════════════════════════════════════════════════════════
 const express  = require("express");
 const router   = express.Router();
-const bcrypt   = require("bcryptjs");
-const Seller   = require("../../models/Seller.model");
+const Staff    = require("../../models/Staff.model");
 const { logAction } = require("../../utils/audit");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
-
-const PERMISSIONS = {
-  admin:    ["all"],
-  manager:  ["orders", "clients", "inventory", "billing", "reports", "export", "search", "notifications"],
-  employee: ["orders", "clients", "inventory", "search"],
-};
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // GET /api/admin/roles — list all staff
 router.get("/", async (req, res) => {
   try {
-    const staff = await Seller.find({ role: { $in: ["admin", "manager", "employee"] } })
-      .select("name email phone role permissions status createdAt lastLogin")
+    const staff = await Staff.find({})
+      .select("name email phone role status createdAt")
       .lean();
     res.json({ success: true, staff });
   } catch (err) {
@@ -38,18 +31,17 @@ router.post("/", async (req, res) => {
     if (!name || !email || !password)
       return res.status(400).json({ success: false, message: "Name, email and password are required" });
 
-    const exists = await Seller.findOne({ email });
+    const exists = await Staff.findOne({ email: email.toLowerCase() });
     if (exists) return res.status(409).json({ success: false, message: "Email already registered" });
 
-    const hashed = await bcrypt.hash(password, 12);
-    const staff  = await Seller.create({
-      name, email, phone: phone || "",
-      password: hashed,
+    // passwordHash is hashed automatically by the Staff model's pre-save hook
+    const staff = await Staff.create({
+      name,
+      email,
+      phone: phone || "",
+      passwordHash: password,
       role,
-      permissions: PERMISSIONS[role],
       status: "active",
-      kycStatus: "approved",
-      isEmailVerified: true,
     });
 
     await logAction(req, {
@@ -59,26 +51,26 @@ router.post("/", async (req, res) => {
       description: `Created ${role} account for ${name} (${email})`,
     });
 
-    res.status(201).json({ success: true, message: `${role} account created`, staff: { _id: staff._id, name, email, role } });
+    res.status(201).json({
+      success: true,
+      message: `${role} account created`,
+      staff: { _id: staff._id, name, email, role },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// PATCH /api/admin/roles/:id — update role or permissions
+// PATCH /api/admin/roles/:id — update role or status
 router.patch("/:id", async (req, res) => {
   try {
-    const { role, permissions, status } = req.body;
+    const { role, status } = req.body;
     const update = {};
-    if (role && ["manager", "employee"].includes(role)) {
-      update.role = role;
-      update.permissions = PERMISSIONS[role];
-    }
-    if (permissions) update.permissions = permissions;
-    if (status)      update.status = status;
+    if (role && ["manager", "employee"].includes(role)) update.role = role;
+    if (status) update.status = status;
 
-    const staff = await Seller.findByIdAndUpdate(req.params.id, update, { new: true })
-      .select("name email role permissions status");
+    const staff = await Staff.findByIdAndUpdate(req.params.id, update, { new: true })
+      .select("name email role status");
     if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
 
     await logAction(req, {
@@ -97,11 +89,11 @@ router.patch("/:id", async (req, res) => {
 // DELETE /api/admin/roles/:id — remove staff account
 router.delete("/:id", async (req, res) => {
   try {
-    const staff = await Seller.findById(req.params.id);
+    const staff = await Staff.findById(req.params.id);
     if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
     if (staff.role === "admin") return res.status(403).json({ success: false, message: "Cannot delete admin accounts" });
 
-    await Seller.findByIdAndDelete(req.params.id);
+    await Staff.findByIdAndDelete(req.params.id);
     await logAction(req, {
       action: "DELETE",
       entity: "Staff",
@@ -121,8 +113,13 @@ router.post("/:id/reset-password", async (req, res) => {
     const { password } = req.body;
     if (!password || password.length < 6)
       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
-    const hashed = await bcrypt.hash(password, 12);
-    await Seller.findByIdAndUpdate(req.params.id, { password: hashed });
+
+    const staff = await Staff.findById(req.params.id).select("+passwordHash");
+    if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
+
+    staff.passwordHash = password; // pre-save hook re-hashes it
+    await staff.save();
+
     res.json({ success: true, message: "Password reset successfully" });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

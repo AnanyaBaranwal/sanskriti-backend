@@ -15,9 +15,10 @@ const {
   deleteBill,
   exportBills,
 } = require("../../controllers/adminBillController");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+// "Billing" module — manager only, per role table (plus admin via "*")
+router.use(protectStaff, requireModule("billing"));
 
 // Static/literal paths MUST come before the "/:id" catch-all route below,
 // otherwise Express matches them as an :id parameter instead.

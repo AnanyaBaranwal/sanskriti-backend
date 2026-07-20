@@ -6,10 +6,10 @@ const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
 const Seller  = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, requireModule("export"));
 
 // ── Helper: build workbook and stream it ─────────────────────
 const streamExcel = async (res, filename, setupFn) => {
