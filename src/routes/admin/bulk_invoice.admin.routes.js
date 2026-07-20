@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// FILE 3: src/routes/admin/bulkinvoice.admin.routes.js
+// FILE: src/routes/admin/bulkinvoice.admin.routes.js
 // Bulk invoice generation
 // ═══════════════════════════════════════════════════════════════
 const express = require("express");
@@ -7,9 +7,9 @@ const router  = express.Router();
 const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
 const { logAction } = require("../../utils/audit");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // POST /api/admin/bulk-invoice/generate
 // Body: { orderIds: [...] } OR { status: "DELIVERED", dateFrom, dateTo }

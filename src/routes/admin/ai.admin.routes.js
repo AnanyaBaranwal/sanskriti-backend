@@ -6,9 +6,9 @@ const Order   = require("../../models/Order.model");
 const Bill    = require("../../models/Bill.model");
 const Seller  = require("../../models/Seller.model");
 const Product = require("../../models/Product.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 const anthropic = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
 

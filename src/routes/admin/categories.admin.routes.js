@@ -2,12 +2,12 @@ const express  = require("express");
 const router   = express.Router();
 
 const Category = require("../../models/Category.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 const { uploadCategoryImages } = require("../../middleware/upload.middleware");
 
 // All category admin routes require login + admin role
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // ── GET /api/admin/categories ─────────────────────────────────
 // Every category (active + inactive), sorted for the admin table

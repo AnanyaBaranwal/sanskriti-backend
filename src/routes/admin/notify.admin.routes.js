@@ -5,10 +5,10 @@ const axios      = require("axios");
 
 const Seller  = require("../../models/Seller.model");
 const Order   = require("../../models/Order.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // Reuse transporter
 const transporter = nodemailer.createTransport({

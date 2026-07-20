@@ -1,13 +1,13 @@
 // ═══════════════════════════════════════════════════════════════
-// FILE 1: src/routes/admin/duplicate.admin.routes.js
+// FILE: src/routes/admin/duplicate.admin.routes.js
 // Duplicate order detection
 // ═══════════════════════════════════════════════════════════════
 const express = require("express");
 const router  = express.Router();
 const Order   = require("../../models/Order.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // GET /api/admin/duplicates
 // Finds orders with same buyer phone + same items within 24 hours

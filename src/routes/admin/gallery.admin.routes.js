@@ -11,9 +11,9 @@ const {
   adminDeleteGalleryProduct,
 } = require("../../controllers/galleryProductController");
 
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // ── GET /api/admin/gallery ─────────────────────────────────────
 router.get("/", adminListGalleryProducts);

@@ -2,10 +2,10 @@ const express = require("express");
 const router  = express.Router();
 
 const Product = require("../../models/Product.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 // ── GET /api/admin/inventory ──────────────────────────────────
 // All products with search + filter
@@ -131,7 +131,7 @@ router.post("/", async (req, res) => {
     if (!name) return res.status(400).json({ success: false, message: "Product name is required" });
 
     const product = await Product.create({
-      sellerId: sellerId || req.seller.id,
+      sellerId: sellerId || req.staff.id,
       name, sku, category, description,
       costPrice:    costPrice    || 0,
       sellingPrice: sellingPrice || 0,
@@ -143,7 +143,7 @@ router.post("/", async (req, res) => {
     if (stock > 0) {
       product.movementHistory.push({
         type: "IN", quantity: stock, reason: "Initial stock",
-        recordedBy: req.seller.id, stockAfter: stock,
+        recordedBy: req.staff.id, stockAfter: stock,
       });
       await product.save();
     }
@@ -209,7 +209,7 @@ router.patch("/:id/stock", async (req, res) => {
     product.stock = newStock;
     product.movementHistory.push({
       type, quantity: delta, reason: reason || type,
-      recordedBy: req.seller.id, stockAfter: newStock,
+      recordedBy: req.staff.id, stockAfter: newStock,
     });
 
     // Keep only last 200 movements

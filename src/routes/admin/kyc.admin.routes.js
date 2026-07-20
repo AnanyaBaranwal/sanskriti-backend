@@ -5,11 +5,11 @@ const path     = require("path");
 
 const Seller = require("../../models/Seller.model");
 const Kyc    = require("../../models/Kyc.model");
-const { protect, restrictTo } = require("../../middleware/auth.middleware");
+const { protectStaff, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 const { uploadKYCAdmin } = require("../../middleware/upload.middleware");
 
-router.use(protect, restrictTo("admin"));
+router.use(protectStaff, restrictStaffTo("admin"));
 
 const VALID_KYC_STATUSES = ["not_submitted", "under_review", "approved", "rejected"];
 const KYC_DOC_FIELDS = ["panDocument", "aadharDocument", "cancelledCheque"];
@@ -208,7 +208,7 @@ router.patch("/:id/kyc", async (req, res) => {
     kyc.status     = status;
     kyc.adminNote  = note || "";
     kyc.reviewedAt = new Date();
-    kyc.reviewedBy = req.seller?.name || "Admin";
+    kyc.reviewedBy = req.staff?.name || "Admin";
     await kyc.save();
 
     if (status === "approved" && seller.status === "pending") {
