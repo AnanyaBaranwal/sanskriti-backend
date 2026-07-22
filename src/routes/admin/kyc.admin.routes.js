@@ -12,7 +12,7 @@ const { uploadKYCAdmin } = require("../../middleware/upload.middleware");
 router.use(protectStaff, restrictStaffTo("admin"));
 
 const VALID_KYC_STATUSES = ["not_submitted", "under_review", "approved", "rejected"];
-const KYC_DOC_FIELDS = ["panDocument", "aadharDocument", "cancelledCheque"];
+const KYC_DOC_FIELDS = ["panDocument", "aadharDocument", "cancelledCheque", "businessDocument", "selfieDocument"];
 
 // POST /api/admin/sellers — admin manually creates a new seller account
 router.post("/", async (req, res) => {
@@ -255,9 +255,11 @@ router.post("/:id/kyc/upload", uploadKYCAdmin, async (req, res) => {
     if (bankAccountName)   kyc.bankAccountName    = bankAccountName;
 
     if (req.files) {
-      if (req.files.panDocument)     kyc.panDocument     = req.files.panDocument[0].path;
-      if (req.files.aadharDocument)  kyc.aadharDocument  = req.files.aadharDocument[0].path;
-      if (req.files.cancelledCheque) kyc.cancelledCheque = req.files.cancelledCheque[0].path;
+      if (req.files.panDocument)      kyc.panDocument      = req.files.panDocument[0].path;
+      if (req.files.aadharDocument)   kyc.aadharDocument   = req.files.aadharDocument[0].path;
+      if (req.files.cancelledCheque)  kyc.cancelledCheque  = req.files.cancelledCheque[0].path;
+      if (req.files.businessDocument) kyc.businessDocument = req.files.businessDocument[0].path;
+      if (req.files.selfieDocument)   kyc.selfieDocument   = req.files.selfieDocument[0].path;
     }
 
     if (["not_submitted", "rejected"].includes(kyc.status)) {
