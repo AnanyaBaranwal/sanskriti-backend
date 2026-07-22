@@ -87,8 +87,8 @@ app.use(cors({
 }));
 
 // ── Rate limiters ─────────────────────────────────────────────
-app.use("/api/auth", rateLimit({ windowMs: 15*60*1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { success:false, message:"Too many login attempts." } }));
-app.use("/api",      rateLimit({ windowMs: 60*1000, max: 120, standardHeaders: true, legacyHeaders: false, message: { success:false, message:"Too many requests." } }));
+app.use("/api/auth", rateLimit({ windowMs: 15*60*1000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success:false, message:"Too many login attempts." } }));
+app.use("/api",      rateLimit({ windowMs: 60*1000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success:false, message:"Too many requests." } }));
 
 // ── Razorpay webhook needs the RAW body for signature verification.
 // Must be registered BEFORE express.json(), otherwise the body gets
