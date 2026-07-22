@@ -4,6 +4,7 @@ const Wallet = require("../models/Wallet.model");
 const Transaction = require("../models/Transaction.model");
 const Seller = require("../models/Seller.model");
 const mongoose = require("mongoose");
+const { checkSellerEligibility, eligibilityMessage } = require("../utils/sellerEligibility");
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -13,6 +14,18 @@ const razorpay = new Razorpay({
 // ─── POST /api/payments/create-order ─────────────────────────────────────────
 exports.createOrder = async (req, res) => {
   try {
+    // Gate BEFORE the Razorpay checkout even opens — deliberately not
+    // enforced in /verify or the webhook below, since by that point the
+    // seller has already paid and must be credited regardless.
+    const eligibility = await checkSellerEligibility(req.seller.id);
+    if (!eligibility.eligible) {
+      return res.status(403).json({
+        success: false,
+        message: eligibilityMessage(eligibility),
+        eligibility,
+      });
+    }
+
     const { amount } = req.body;
 
     if (!amount || amount < 1) {
@@ -45,6 +58,14 @@ exports.createOrder = async (req, res) => {
 // Seller.walletBalance is the authoritative wallet balance (see
 // walletController.js) — this credits it directly, in the same transaction
 // as the Wallet-collection mirror update, so the two never drift apart.
+//
+// NOTE: deliberately NOT gated by checkSellerEligibility. If a seller was
+// eligible when create-order ran but somehow becomes ineligible before
+// verify (e.g. admin revokes KYC mid-checkout), the payment has already
+// been taken by Razorpay — blocking the credit here would take their
+// money without crediting their wallet. Eligibility is enforced only at
+// the point of *initiating* a new charge, never at the point of
+// confirming money already collected.
 exports.verifyPayment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -135,7 +156,8 @@ exports.verifyPayment = async (req, res) => {
 
 // ─── POST /api/payments/webhook ───────────────────────────────────────────────
 // Called directly by Razorpay's servers. Confirms payment even if the seller
-// closed the browser before the frontend could call /verify.
+// closed the browser before the frontend could call /verify. Same rule as
+// /verify above: never gated by eligibility — money has already changed hands.
 exports.webhook = async (req, res) => {
   try {
     const signature = req.headers["x-razorpay-signature"];

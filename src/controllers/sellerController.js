@@ -1,4 +1,5 @@
 const Seller = require("../models/Seller.model");
+const { checkSellerEligibility } = require("../utils/sellerEligibility");
 
 // ─── GET /api/seller/profile ──────────────────────────────────────────────────
 exports.getProfile = async (req, res) => {
@@ -26,7 +27,16 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     // Only allow these fields to be updated — never role, status, passwordHash
-    const allowedFields = ["name", "phone", "address"];
+    // NOTE: "notificationPrefs" added here (previously this tab was purely
+    // client-side/mocked — toggles reset on every page load and never
+    // reached the backend at all). The frontend always sends the FULL
+    // 8-key object when saving, so a plain $set is safe — it replaces the
+    // whole sub-document, it doesn't need per-key merging.
+    // NOTE: "bankDetails" added here — previously it wasn't in this list
+    // (and the field didn't even exist on the Seller schema), so the
+    // Profile page's Bank tab was saving nothing at all despite showing
+    // a success toast.
+    const allowedFields = ["name", "phone", "address", "notificationPrefs", "bankDetails"];
     const updates = {};
 
     allowedFields.forEach((field) => {
@@ -103,7 +113,21 @@ exports.updateBusiness = async (req, res) => {
   }
 };
 
-// ─── PATCH /api/seller/change-password ───────────────────────────────────────
+// ─── GET /api/seller/eligibility ──────────────────────────────────────────────
+// Lets the frontend proactively disable the "Recharge Wallet" and "Place
+// Order" buttons (with a clear reason) instead of only finding out via a
+// 403 after the seller already tried. Reuses the exact same check that
+// paymentController.createOrder and orderController.createOrder enforce,
+// so the two can never disagree.
+exports.getEligibility = async (req, res) => {
+  try {
+    const eligibility = await checkSellerEligibility(req.seller.id);
+    res.status(200).json({ success: true, ...eligibility });
+  } catch (error) {
+    console.error("Get eligibility error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

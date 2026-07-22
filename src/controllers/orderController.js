@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const GalleryProduct = require("../models/GalleryProduct.model");
 const Wallet = require("../models/Wallet.model");
 const { findOrCreateCustomer, refreshCustomerStats } = require("../utils/clientStats");
+const { checkSellerEligibility, eligibilityMessage } = require("../utils/sellerEligibility");
 
 // ── Helper: calculate totals ──────────────────────────────────
 const calculateTotals = (items, taxPercent = 0, discount = 0) => {
@@ -16,6 +17,18 @@ const calculateTotals = (items, taxPercent = 0, discount = 0) => {
 // ── POST /api/orders ──────────────────────────────────────────
 exports.createOrder = async (req, res) => {
   try {
+    // Gate placing an order behind the same eligibility check as wallet
+    // recharge (see utils/sellerEligibility.js) — complete profile
+    // (business, address, bank details) + approved KYC.
+    const eligibility = await checkSellerEligibility(req.seller.id);
+    if (!eligibility.eligible) {
+      return res.status(403).json({
+        success: false,
+        message: eligibilityMessage(eligibility),
+        eligibility,
+      });
+    }
+
     const { buyer, items, platform, platformOrderId, taxPercent, discountAmount, paymentMethod, notes } = req.body;
 
     if (!buyer?.name || !buyer?.phone) {

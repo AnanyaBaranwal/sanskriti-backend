@@ -108,6 +108,29 @@ const sellerSchema = new mongoose.Schema(
       min: [0, "Wallet balance cannot be negative"],
     },
     totalRefunded: { type: Number, default: 0 },
+
+    // ── Bank details for payout withdrawals ──────────────────────
+    bankDetails: {
+      accountHolder: { type: String, trim: true, default: "" },
+      bankName:      { type: String, trim: true, default: "" },
+      accountNumber: { type: String, trim: true, default: "" },
+      ifsc:          { type: String, trim: true, uppercase: true, default: "" },
+    },
+
+    // ── Email notification preferences ───────────────────────────
+    // Set/edited from the seller dashboard's Profile > Notifications tab.
+    // All default to the same values the frontend UI defaults to, so a
+    // seller who never touches this tab gets sensible defaults either way.
+    notificationPrefs: {
+      orderUpdates:   { type: Boolean, default: true },
+      walletAlerts:   { type: Boolean, default: true },
+      payoutStatus:   { type: Boolean, default: true },
+      kycUpdates:     { type: Boolean, default: true },
+      securityAlerts: { type: Boolean, default: true },
+      weeklyReport:   { type: Boolean, default: true },
+      promotions:     { type: Boolean, default: false },
+      newFeatures:    { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );
