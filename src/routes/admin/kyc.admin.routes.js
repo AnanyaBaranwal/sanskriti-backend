@@ -195,6 +195,17 @@ router.patch("/:id/kyc", async (req, res) => {
       });
     }
 
+    // Rejection must always come with a reason — this is what the seller
+    // sees on their Documents tab so they know what to fix before
+    // re-submitting. Enforced here so it can't be skipped even if the
+    // frontend form validation is ever bypassed or changes.
+    if (status === "rejected" && !note?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "A rejection reason is required when rejecting KYC.",
+      });
+    }
+
     const seller = await Seller.findById(req.params.id);
     if (!seller) return res.status(404).json({ success: false, message: "Seller not found" });
 
@@ -209,6 +220,10 @@ router.patch("/:id/kyc", async (req, res) => {
     kyc.adminNote  = note || "";
     kyc.reviewedAt = new Date();
     kyc.reviewedBy = req.staff?.name || "Admin";
+    // NOTE: rejection deliberately does NOT touch any uploaded documents.
+    // The seller sees "Rejected" + this admin note on their Documents tab
+    // and must manually remove/replace files themselves, then resubmit —
+    // nothing is auto-cleared here.
     await kyc.save();
 
     if (status === "approved" && seller.status === "pending") {
