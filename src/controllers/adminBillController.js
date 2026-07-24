@@ -1,9 +1,12 @@
 const fs      = require("fs");
 const path    = require("path");
+const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
 const Bill    = require("../models/Bill.model");
 const Seller  = require("../models/Seller.model");
 const Order   = require("../models/Order.model");
+const Wallet      = require("../models/Wallet.model");
+const Transaction = require("../models/Transaction.model");
 const { generateInvoicePDF, ensureBillsDir } = require("../utils/invoicePdf");
 const { logAction } = require("../utils/audit");
 
@@ -207,7 +210,15 @@ exports.createManualBill = async (req, res) => {
   }
 };
 
+// ── POST /api/admin/bills/generate-from-order ─────────────────
+// This is now the ONLY path that confirms a PENDING order and debits the
+// seller's wallet. What used to live in PATCH /admin/orders/:id/status
+// (when manually setting CONFIRMED) has moved here entirely — generating
+// the invoice IS the confirmation action.
 exports.createBillFromOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const {
       orderId, shippingCharge = 0, packagingCharge = 0, taxPercent,
@@ -215,31 +226,47 @@ exports.createBillFromOrder = async (req, res) => {
     } = req.body;
 
     if (!orderId) {
+      await session.abortTransaction();
       return res.status(400).json({ success:false, message:"orderId is required" });
     }
     if (taxPercent === undefined || taxPercent === null || taxPercent === "") {
+      await session.abortTransaction();
       return res.status(400).json({ success:false, message:"Tax % is required" });
     }
 
-    const order = await Order.findById(orderId).populate("sellerId");
-    if (!order) return res.status(404).json({ success:false, message:"Order not found" });
-    if (!order.sellerId) return res.status(400).json({ success:false, message:"This order has no linked seller — cannot bill it" });
+    const order = await Order.findById(orderId).populate("sellerId").session(session);
+    if (!order) {
+      await session.abortTransaction();
+      return res.status(404).json({ success:false, message:"Order not found" });
+    }
+    if (!order.sellerId) {
+      await session.abortTransaction();
+      return res.status(400).json({ success:false, message:"This order has no linked seller — cannot bill it" });
+    }
 
-    const existing = await Bill.findOne({ orderId });
+    const existing = await Bill.findOne({ orderId }).session(session);
     if (existing) {
+      await session.abortTransaction();
       return res.status(400).json({ success:false, message:`This order already has an invoice (${existing.invoiceNumber})` });
     }
 
     if (transactionId) {
-      const dupe = await Bill.findOne({ transactionId });
-      if (dupe) return res.status(400).json({ success:false, message:"Transaction ID already exists" });
+      const dupe = await Bill.findOne({ transactionId }).session(session);
+      if (dupe) {
+        await session.abortTransaction();
+        return res.status(400).json({ success:false, message:"Transaction ID already exists" });
+      }
     }
     if (invoiceNumber) {
-      const dupe = await Bill.findOne({ invoiceNumber });
-      if (dupe) return res.status(400).json({ success:false, message:"Invoice number already exists" });
+      const dupe = await Bill.findOne({ invoiceNumber }).session(session);
+      if (dupe) {
+        await session.abortTransaction();
+        return res.status(400).json({ success:false, message:"Invoice number already exists" });
+      }
     }
 
     if (!order.items?.length) {
+      await session.abortTransaction();
       return res.status(400).json({ success:false, message:"This order has no items to bill" });
     }
 
@@ -263,6 +290,72 @@ exports.createBillFromOrder = async (req, res) => {
     const taxPct     = Number(taxPercent) || 0;
     const taxAmount  = Math.round(((subtotal + ship + pack) * taxPct) / 100);
     const grandTotal = subtotal + ship + pack + taxAmount;
+
+    // ── Debit the seller's wallet for the gallery cost. This used to live
+    // in PATCH /admin/orders/:id/status when manually setting CONFIRMED —
+    // that path is now blocked entirely. Generating the invoice is the
+    // ONLY way an order gets confirmed and the wallet gets charged. ──
+    let walletMessage = null;
+    if (!order.walletDeducted) {
+      const wallet = await Wallet.findOne({ sellerId: order.sellerId }).session(session);
+      const currentBalance = wallet?.balance || 0;
+      const debitAmount = order.costTotal > 0 ? order.costTotal : order.total;
+      const isGallerySourced = order.costTotal > 0;
+
+      if (currentBalance < debitAmount) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot generate invoice — seller wallet balance (₹${currentBalance.toLocaleString("en-IN")}) is less than the ${isGallerySourced ? "gallery cost" : "order"} amount (₹${debitAmount.toLocaleString("en-IN")}). Ask the seller to add funds first.`,
+        });
+      }
+
+      const balanceBefore = wallet.balance;
+      const balanceAfter  = balanceBefore - debitAmount;
+
+      await Wallet.findByIdAndUpdate(
+        wallet._id,
+        { $inc: { balance: -debitAmount, totalDebited: debitAmount } },
+        { session }
+      );
+
+      await Transaction.create([{
+        walletId:    wallet._id,
+        sellerId:    order.sellerId,
+        type:        "DEBIT",
+        amount:      debitAmount,
+        balanceBefore,
+        balanceAfter,
+        description: isGallerySourced
+          ? `Order ${order.orderNumber} confirmed via invoice generation — gallery cost price debited`
+          : `Order ${order.orderNumber} confirmed via invoice generation`,
+        reference:   `ORDER-${order.orderNumber}`,
+        category:    isGallerySourced ? "GALLERY_ORDER" : "ORDER_PAYMENT",
+        status:      "COMPLETED",
+        metadata:    { orderId: order._id },
+      }], { session });
+
+      order.walletDeducted       = true;
+      order.walletDeductedAmount = debitAmount;
+      walletMessage = isGallerySourced
+        ? `₹${debitAmount.toLocaleString("en-IN")} (gallery cost) deducted from seller wallet`
+        : `₹${debitAmount.toLocaleString("en-IN")} deducted from seller wallet`;
+    }
+
+    // ── Auto-confirm: generating the bill is now the only path from
+    // PENDING to CONFIRMED. Admin/staff can still move status forward
+    // manually after this point (CONFIRMED → PROCESSING → ...). ──
+    const statusBefore = order.status;
+    if (order.status === "PENDING") {
+      order.status = "CONFIRMED";
+      order.statusHistory.push({
+        status: "CONFIRMED",
+        note: walletMessage ? `Auto-confirmed on invoice generation — ${walletMessage}` : "Auto-confirmed on invoice generation",
+        changedAt: new Date(),
+      });
+    }
+
+    await order.save({ session });
 
     const bill = new Bill({
       sellerId: seller._id,
@@ -292,38 +385,46 @@ exports.createBillFromOrder = async (req, res) => {
       paymentStatus: "UNPAID",
     });
 
-    await bill.save();
+    await bill.save({ session });
 
-    let pdfBytes;
+    await session.commitTransaction();
+
+    // PDF generation happens AFTER commit — the bill record, wallet debit,
+    // and order confirmation are the parts that must never be rolled back
+    // once committed. A PDF render failure shouldn't undo real money
+    // movement; downloadBillPdf regenerates on-demand if no file exists.
     try {
-      pdfBytes = await generateInvoicePDF(bill);
+      const pdfBytes = await generateInvoicePDF(bill);
+      const billsDir = ensureBillsDir();
+      const filename = `${bill.invoiceNumber}.pdf`;
+      fs.writeFileSync(path.join(billsDir, filename), pdfBytes);
+      bill.pdfUrl = `/uploads/bills/${filename}`;
+      await bill.save();
     } catch (pdfErr) {
-      await Bill.findByIdAndDelete(bill._id);
-      console.error("Generate invoice PDF error (order):", pdfErr);
-      return res.status(500).json({
-        success: false,
-        message: `Bill was not created — invoice PDF generation failed: ${pdfErr.message}`,
-      });
+      console.error("Generate invoice PDF error (order) — bill/debit already committed, PDF will regenerate on view:", pdfErr);
     }
-
-    const billsDir = ensureBillsDir();
-    const filename = `${bill.invoiceNumber}.pdf`;
-    fs.writeFileSync(path.join(billsDir, filename), pdfBytes);
-    bill.pdfUrl = `/uploads/bills/${filename}`;
-    await bill.save();
 
     await logAction(req, {
       action: "CREATE",
       entity: "Bill",
       entityId: bill._id,
       entityRef: bill.invoiceNumber,
-      description: `Invoice ${bill.invoiceNumber} generated for ${bill.buyer.name} from order ${order.orderNumber}`,
+      description: `Invoice ${bill.invoiceNumber} generated for ${bill.buyer.name} from order ${order.orderNumber}`
+        + (statusBefore !== order.status ? ` — order auto-confirmed (${statusBefore} → ${order.status})` : "")
+        + (walletMessage ? ` — ${walletMessage}` : ""),
     });
 
-    res.status(201).json({ success:true, message:"Invoice generated successfully", bill });
+    res.status(201).json({
+      success: true,
+      message: "Invoice generated successfully" + (walletMessage ? ` — ${walletMessage}` : ""),
+      bill, order, walletMessage,
+    });
   } catch (err) {
+    await session.abortTransaction();
     console.error("Create bill from order error:", err);
     res.status(500).json({ success:false, message: err.message });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -372,13 +473,6 @@ exports.getBillByIdAdmin = async (req, res) => {
 // ── GET /api/admin/bills/:id/pdf ────────────────────────────────
 // Regenerates the invoice PDF live from the Bill document in MongoDB and
 // streams it back directly — deliberately does NOT read from disk.
-//
-// Why: uploads/ is written to at runtime but is not part of the git repo,
-// so on hosts that redeploy via a fresh git checkout (like Hostinger
-// autodeploy), any previously-saved PDF files get wiped on every deploy.
-// MongoDB data survives deploys; a saved file on disk does not. Generating
-// on-demand from the DB sidesteps that entirely and also means "View" is
-// always correct/fresh — no caching or stale-file edge cases possible.
 exports.downloadBillPdf = async (req, res) => {
   try {
     const bill = await Bill.findById(req.params.id);

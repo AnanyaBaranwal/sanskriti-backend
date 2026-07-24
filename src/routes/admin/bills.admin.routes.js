@@ -15,7 +15,7 @@ const {
   deleteBill,
   exportBills,
 } = require("../../controllers/adminBillController");
-const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
+const { protectStaff, requireModule, restrictStaffTo } = require("../../middleware/staffAuth.middleware");
 
 // "Billing" module — manager only, per role table (plus admin via "*")
 router.use(protectStaff, requireModule("billing"));
@@ -28,7 +28,14 @@ router.get("/order/:orderId",       getOrderForBilling);
 router.get("/stats",                getBillingStats);
 router.get("/export",               exportBills);
 router.post("/generate",            createManualBill);
-router.post("/generate-from-order", createBillFromOrder);
+
+// Admin-only: this is the ONLY route that confirms an order and debits
+// the seller's wallet (see createBillFromOrder in adminBillController.js).
+// Manager and employee pass requireModule("billing") above, but must be
+// blocked specifically here — generating an invoice from an order is a
+// financial action, not a routine billing task.
+router.post("/generate-from-order", restrictStaffTo("admin"), createBillFromOrder);
+
 router.get("/",                     getAllBills);
 
 router.get("/:id",                  getBillByIdAdmin);

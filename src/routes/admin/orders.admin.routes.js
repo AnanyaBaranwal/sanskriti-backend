@@ -8,8 +8,6 @@ const mongoose = require("mongoose");
 
 const Order       = require("../../models/Order.model");
 const Seller      = require("../../models/Seller.model");
-const Wallet      = require("../../models/Wallet.model");
-const Transaction = require("../../models/Transaction.model");
 const { protectStaff, requireModule } = require("../../middleware/staffAuth.middleware");
 const { logAction } = require("../../utils/audit");
 const { findOrCreateCustomer, refreshCustomerStats } = require("../../utils/clientStats");
@@ -187,6 +185,40 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
+// ── DELETE /api/admin/orders/:id ───────────────────────────────
+// Only orders that never got billed/confirmed can be deleted — once the
+// wallet's been debited, deleting the order would orphan a real financial
+// transaction with no order to point back to. Cancel it instead if it
+// needs to go away after that point.
+router.delete("/:id", async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+
+    if (order.walletDeducted) {
+      return res.status(400).json({
+        success: false,
+        message: "This order's wallet debit has already been processed — it can no longer be deleted. Cancel it instead.",
+      });
+    }
+
+    await Order.findByIdAndDelete(req.params.id);
+
+    await logAction(req, {
+      action: "DELETE",
+      entity: "Order",
+      entityId: order._id,
+      entityRef: order.orderNumber,
+      description: `Order ${order.orderNumber} deleted by admin`,
+    });
+
+    res.json({ success: true, message: "Order deleted" });
+  } catch (err) {
+    console.error("[admin delete order]", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ── POST /api/admin/orders/bulk-upload ────────────────────────
 router.post("/bulk-upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
@@ -326,6 +358,16 @@ router.patch("/bulk-status", async (req, res) => {
     }
 
     const newStatus = status.toUpperCase();
+
+    // CONFIRMED can no longer be set manually, in bulk or otherwise — it
+    // only happens via bill generation (POST /admin/bills/generate-from-order).
+    if (newStatus === "CONFIRMED") {
+      return res.status(400).json({
+        success: false,
+        message: "Orders can't be confirmed manually, even in bulk. Generate an invoice for each order to confirm it and debit the seller's wallet automatically.",
+      });
+    }
+
     const updated   = [];
     const failed    = [];
 
@@ -392,6 +434,17 @@ router.patch("/:id/status", async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
+    // CONFIRMED can no longer be set manually — generating an invoice
+    // (POST /admin/bills/generate-from-order) is the only path that
+    // confirms an order and debits the seller's wallet.
+    if (newStatus === "CONFIRMED") {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Orders can't be confirmed manually. Generate the invoice for this order to confirm it and debit the seller's wallet automatically.",
+      });
+    }
+
     const FULFILLMENT_STATUSES = ["PROCESSING", "PACKED", "SHIPPED", "DELIVERED"];
     if (FULFILLMENT_STATUSES.includes(newStatus) && order.status === "PENDING") {
       await session.abortTransaction();
@@ -403,53 +456,6 @@ router.patch("/:id/status", async (req, res) => {
 
     const before = order.status;
     let walletMessage = null;
-
-    if (newStatus === "CONFIRMED" && !order.walletDeducted) {
-      const wallet = await Wallet.findOne({ sellerId: order.sellerId }).session(session);
-      const currentBalance = wallet?.balance || 0;
-
-      const amount = order.costTotal > 0 ? order.costTotal : order.total;
-      const isGallerySourced = order.costTotal > 0;
-
-      if (currentBalance < amount) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Cannot confirm order — seller wallet balance (₹${currentBalance.toLocaleString("en-IN")}) is less than the ${isGallerySourced ? "gallery cost" : "order"} amount (₹${amount.toLocaleString("en-IN")}). Ask the seller to add funds first.`,
-        });
-      }
-
-      const balanceBefore = wallet.balance;
-      const balanceAfter  = balanceBefore - amount;
-
-      await Wallet.findByIdAndUpdate(
-        wallet._id,
-        { $inc: { balance: -amount, totalDebited: amount } },
-        { session }
-      );
-
-      await Transaction.create([{
-        walletId:      wallet._id,
-        sellerId:      order.sellerId,
-        type:          "DEBIT",
-        amount,
-        balanceBefore,
-        balanceAfter,
-        description:   isGallerySourced
-          ? `Order ${order.orderNumber} confirmed by admin — gallery cost price debited`
-          : `Order ${order.orderNumber} confirmed by admin`,
-        reference:     `ORDER-${order.orderNumber}`,
-        category:      isGallerySourced ? "GALLERY_ORDER" : "ORDER_PAYMENT",
-        status:        "COMPLETED",
-        metadata:      { orderId: order._id },
-      }], { session });
-
-      order.walletDeducted       = true;
-      order.walletDeductedAmount = amount;
-      walletMessage = isGallerySourced
-        ? `₹${amount.toLocaleString("en-IN")} (gallery cost) deducted from seller wallet`
-        : `₹${amount.toLocaleString("en-IN")} deducted from seller wallet`;
-    }
 
     if (newStatus === "CANCELLED") {
       const msg = flagRefundPending(order);
